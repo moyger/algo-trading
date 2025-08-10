@@ -13,9 +13,15 @@ len21        = input.int(21,  "EMA Fast (Filter)", minval=1)
 len50        = input.int(50,  "EMA Trend Filter", minval=1)
 enableShorts = input.bool(true, "Enable Shorts")
 
+// ===== Trading Mode Settings =====
+tradeMode = input.string("Breakout", "Trade Mode", options=["Breakout", "Fade", "Both"])
+useHTF = input.bool(false, "Use Higher Timeframe Range")
+htfTimeframe = input.timeframe("D", "HTF Timeframe", group="Higher Timeframe")
+
 // ===== Range Detection Settings =====
 rangePeriod  = input.int(20, "Range Lookback Period", minval=5, maxval=100)
 minRangeATR  = input.float(2.0, "Minimum Range Size (ATR Multiple)", step=0.1)
+fadeStretch = input.float(1.0, "Fade Entry ATR Stretch", minval=0.1, maxval=3.0, step=0.1, tooltip="ATR distance beyond range for fade entries")
 
 atrLen       = input.int(14, "ATR Length", minval=1)
 atrMultSL    = input.float(2.0, "ATR Stop Multiplier", step=0.1)
@@ -36,14 +42,24 @@ ema21 = ta.ema(close, len21)
 ema50 = ta.ema(close, len50)
 atr   = ta.atr(atrLen)
 
+// ===== HTF Data (for fade strategy) =====
+htfHigh = request.security(syminfo.tickerid, htfTimeframe, high[1], lookahead=barmerge.lookahead_on)
+htfLow = request.security(syminfo.tickerid, htfTimeframe, low[1], lookahead=barmerge.lookahead_on)
+htfEMA = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, len21)[1], lookahead=barmerge.lookahead_on)
+
 // ===== Range Detection =====
-rangeHigh = ta.highest(high, rangePeriod)
-rangeLow  = ta.lowest(low, rangePeriod)
+// Use HTF or current timeframe based on settings
+rangeHigh = useHTF ? htfHigh : ta.highest(high, rangePeriod)
+rangeLow  = useHTF ? htfLow : ta.lowest(low, rangePeriod)
 rangeSize = rangeHigh - rangeLow
 minRangeSize = minRangeATR * atr
 
 // Valid range check
 validRange = rangeSize >= minRangeSize
+
+// ===== Fade Entry Levels =====
+fadeLongLevel = rangeLow - (atr * fadeStretch)   // Buy below range (fade breakdown)
+fadeShortLevel = rangeHigh + (atr * fadeStretch)  // Sell above range (fade breakout)
 
 // ===== Trailing Stop Variables =====
 var float tradeStopLoss = na
@@ -57,17 +73,39 @@ trailDistance = trailMultiplier * atr
 trendUp   = close > ema50 and ema21 > ema50
 trendDown = close < ema50 and ema21 < ema50
 
+// Background colors for filter conditions
+bgcolor(trendUp ? color.new(color.green, 95) : na)
+bgcolor(trendDown ? color.new(color.red, 95) : na)
+bgcolor(not trendUp and not trendDown ? color.new(color.gray, 95) : na)
+
 // ===== Breakout Conditions =====
 breakoutUp   = close > rangeHigh[1] and validRange
 breakoutDown = close < rangeLow[1] and validRange
+
+// ===== Fade Conditions =====
+fadeSetupLong = close <= fadeLongLevel and validRange
+fadeSetupShort = close >= fadeShortLevel and validRange
 
 // EMA position filters
 aboveEMA21 = close > ema21
 belowEMA21 = close < ema21
 
-// Combined entry conditions
-longTrigger  = trendUp and breakoutUp and aboveEMA21
-shortTrigger = trendDown and breakoutDown and belowEMA21
+// Combined entry conditions based on trade mode
+longBreakout = trendUp and breakoutUp and aboveEMA21
+shortBreakout = trendDown and breakoutDown and belowEMA21
+
+// Fade entries (opposite direction - buy weakness, sell strength)
+longFade = trendDown and fadeSetupLong and belowEMA21  // Buy when oversold in downtrend
+shortFade = trendUp and fadeSetupShort and aboveEMA21   // Sell when overbought in uptrend
+
+// Final triggers based on selected mode
+longTrigger = tradeMode == "Breakout" ? longBreakout : 
+              tradeMode == "Fade" ? longFade : 
+              (longBreakout or longFade)  // "Both" mode
+
+shortTrigger = tradeMode == "Breakout" ? shortBreakout : 
+               tradeMode == "Fade" ? shortFade : 
+               (shortBreakout or shortFade)  // "Both" mode
 
 // ===== Position sizing (risk %) =====
 riskValue  = strategy.equity * (riskPct/100.0)
@@ -172,56 +210,28 @@ if strategy.position_size == 0
     takeProfitTriggered := false
 
 // ===== Visuals =====
-plot(ema21, "EMA 21", color=color.new(color.teal, 0), linewidth=2)
-plot(ema50, "EMA 50", color=color.new(color.orange, 0), linewidth=2)
+// EMAs
+plot(ema21, "EMA 21", color=color.white, linewidth=1)
+plot(ema50, "EMA 50", color=color.gray, linewidth=1)
 
-// Range boundaries
-rangeHighLine = plot(rangeHigh, "Range High", color=validRange ? color.new(color.green, 30) : color.new(color.gray, 70), style=plot.style_line, linewidth=1)
-rangeLowLine = plot(rangeLow, "Range Low", color=validRange ? color.new(color.red, 30) : color.new(color.gray, 70), style=plot.style_line, linewidth=1)
+// HTF/Range High and Low
+newPeriod = useHTF ? ta.change(time(htfTimeframe)) != 0 : false
+plot(newPeriod ? na : rangeHigh, "Range High", color=color.yellow, linewidth=2, style=plot.style_linebr)
+plot(newPeriod ? na : rangeLow, "Range Low", color=color.blue, linewidth=2, style=plot.style_linebr)
 
-// Range fill
-fill(rangeHighLine, rangeLowLine, color=validRange ? color.new(color.blue, 95) : color.new(color.gray, 95), title="Range Fill")
+// Draw stops & targets when in position
+plot(strategy.position_size > 0 ? tradeStopLoss : na, color=color.red, style=plot.style_linebr, title="Long Stop")
+plot(strategy.position_size > 0 and useTakeProfit ? strategy.position_avg_price + atrMultTP*atr : na, color=color.green, style=plot.style_linebr, title="Long Target")
+plot(strategy.position_size < 0 ? tradeStopLoss : na, color=color.red, style=plot.style_linebr, title="Short Stop")
+plot(strategy.position_size < 0 and useTakeProfit ? strategy.position_avg_price - atrMultTP*atr : na, color=color.green, style=plot.style_linebr, title="Short Target")
 
-// Trailing stop
-plot(tradeStopLoss, "Trailing Stop", color=color.red, style=plot.style_linebr, linewidth=1)
+// Draw pending entry levels (gray lines for fade entries)
+showFadeLevels = tradeMode != "Breakout" and strategy.position_size == 0
+plot(showFadeLevels and not newPeriod ? fadeLongLevel : na, "Long Entry Price", color=color.gray, style=plot.style_linebr)
+plot(showFadeLevels and not newPeriod ? fadeShortLevel : na, "Short Entry Price", color=color.gray, style=plot.style_linebr)
 
-// Take profit levels (when enabled)
-takeProfitLevel = strategy.position_size > 0 ? strategy.position_avg_price + atrMultTP*atr : 
-                  strategy.position_size < 0 ? strategy.position_avg_price - atrMultTP*atr : na
-plot(useTakeProfit and strategy.position_size != 0 ? takeProfitLevel : na, 
-     "Take Profit", color=color.new(color.green, 30), style=plot.style_linebr, linewidth=2)
-
-// Entry signals
-plotshape(longTrigger,  title="Long Breakout",  style=shape.triangleup,   location=location.belowbar, size=size.small, color=color.new(color.lime, 0),   text="BO-L")
-plotshape(shortTrigger, title="Short Breakout", style=shape.triangledown, location=location.abovebar, size=size.small, color=color.new(color.red, 0), text="BO-S")
-
-// ===== Exit Type Indicators =====
-// RED X for Stop Loss exits
-plotshape(stopLossTriggered and strategy.position_size == 0, title="Stop Loss Hit", 
-          style=shape.xcross, location=location.abovebar, size=size.large, 
-          color=color.new(color.red, 0), text="X")
-
-// GREEN CIRCLE for Take Profit exits
-plotshape(takeProfitTriggered and strategy.position_size == 0, title="Take Profit Hit", 
-          style=shape.circle, location=location.abovebar, size=size.large, 
-          color=color.new(color.green, 0), text="TP")
-
-// BLUE DIAMOND for EMA exits
-plotshape(emaExitTriggered and strategy.position_size == 0, title="EMA Exit", 
-          style=shape.diamond, location=location.abovebar, size=size.normal, 
-          color=color.new(color.blue, 0), text="EMA")
-
-// Add position status labels for better tracking
-var label positionLabel = na
-if strategy.position_size != 0 and na(positionLabel)
-    positionLabel := label.new(bar_index, strategy.position_size > 0 ? high + atr : low - atr, 
-                               text=strategy.position_size > 0 ? "LONG OPEN" : "SHORT OPEN", 
-                               color=strategy.position_size > 0 ? color.new(color.green, 80) : color.new(color.red, 80),
-                               textcolor=color.white, size=size.small, style=label.style_label_down)
-
-if strategy.position_size == 0 and not na(positionLabel)
-    label.delete(positionLabel)
-    positionLabel := na
+// Remove entry signal markers - let the actual trades show on the chart
+// The strategy tester will show entry/exit arrows automatically
 
 // ===== Human-readable alerts (optional) =====
 alertcondition(longTrigger,  title="Long Breakout",  message="Long: Range breakout above EMA21")
@@ -250,7 +260,7 @@ mkMsg(evt, side, slPrice) =>
     s += '"price":' + str.tostring(close, "#.####") + ','
     s += '"atr":' + str.tostring(atr, "#.####") + ','
     s += '"magic":123457,'  // Different magic number for breakout strategy
-    s += '"tag":"Range-Breakout",'
+    s += '"tag":"Range-' + tradeMode + '",'
     s += '"oid":"' + str.tostring(time) + '-' + evt + '-' + side + '",'
     s += '"ts":' + str.tostring(time) + '}'
     s

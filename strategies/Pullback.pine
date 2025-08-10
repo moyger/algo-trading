@@ -12,6 +12,7 @@ strategy("21/50 EMA Pullback — ATR Stop + 21EMA Exit (Auto-Alerts)",
 len21        = input.int(21,  "EMA Fast (Pullback)", minval=1)
 len50        = input.int(50,  "EMA Trend Filter",    minval=1)
 enableShorts = input.bool(true, "Enable Shorts")
+aggressiveEntries = input.bool(true, "Aggressive Entries", tooltip="Allow entries even when in opposite position (will close and reverse)")
 
 atrLen       = input.int(14, "ATR Length", minval=1)
 atrMultSL    = input.float(2.0, "ATR Stop Multiplier", step=0.1)
@@ -31,6 +32,12 @@ atrMultTP = input.float(3.0, "ATR Take Profit Multiplier", step=0.1)
 useADX = input.bool(false, "Use ADX Filter")
 adxLength = input.int(14, "ADX Length", minval=5, maxval=50)
 adxThreshold = input.float(25.0, "ADX Threshold", minval=10.0, maxval=50.0, step=0.5)
+
+// ===== Trading Session Filter =====
+useSessionFilter = input.bool(false, "Use Trading Session Filter", group="Session Filter")
+sessionType = input.string("Custom", "Session Type", options=["Asia", "London", "New York", "London+NY", "All Sessions", "Custom"], group="Session Filter")
+customSession = input.session("0900-1700", "Custom Session (Exchange Time)", group="Session Filter", tooltip="Only used when Session Type is Custom")
+highlightSession = input.bool(true, "Highlight Active Session", group="Session Filter")
 
 // ===== Core calcs =====
 ema21 = ta.ema(close, len21)
@@ -70,6 +77,29 @@ adxCalc(length) =>
 [adx, diPlus, diMinus] = adxCalc(adxLength)
 adxStrong = adx > adxThreshold
 
+// ===== Trading Session Logic =====
+// Only calculate if session filter is enabled
+inTradingSession = true
+if useSessionFilter
+    // Define major trading sessions in GMT
+    asiaSession = "2300-0800"      // Asia Pacific (Tokyo) 23:00-08:00 GMT
+    londonSession = "0800-1700"    // London 08:00-17:00 GMT
+    nySession = "1300-2200"        // New York 13:00-22:00 GMT (overlap adjusted)
+    londonNySession = "0800-2200"  // London + NY combined
+    allSessions = "0000-2359"      // 24 hours
+    
+    currentSession = switch sessionType
+        "Asia" => asiaSession
+        "London" => londonSession
+        "New York" => nySession
+        "London+NY" => londonNySession
+        "All Sessions" => allSessions
+        "Custom" => customSession
+        => customSession
+    
+    // Check if current time is in session
+    inTradingSession := not na(time(timeframe.period, currentSession))
+
 // ===== Trailing Stop Variables =====
 var float tradeStopLoss = na
 var bool stopLossTriggered = false
@@ -85,11 +115,11 @@ pulledBackDown = high >= ema21
 crossUp        = ta.crossover(close, ema21)
 crossDown      = ta.crossunder(close, ema21)
 
-// Apply ADX filter if enabled
+// Apply filters
 adxFilter = not useADX or adxStrong
 
-longTrigger  = trendUp   and pulledBackUp   and crossUp and adxFilter
-shortTrigger = trendDown and pulledBackDown and crossDown and adxFilter
+longTrigger  = trendUp   and pulledBackUp   and crossUp and adxFilter and inTradingSession
+shortTrigger = trendDown and pulledBackDown and crossDown and adxFilter and inTradingSession
 
 // ===== Position sizing (risk %) =====
 riskValue  = strategy.equity * (riskPct/100.0)
@@ -98,23 +128,57 @@ orderQty() =>
     useRiskSize and not na(qtyByRisk) and qtyByRisk > 0 ? qtyByRisk : 1
 
 // ===== Entries =====
-canTakeTrade = strategy.position_size == 0 and not na(atr) and not na(ema21)
+canTakeTrade = not na(atr) and not na(ema21)
 
 if canTakeTrade
-    // Reset trailing stop before new trade
-    tradeStopLoss := na
-    
-    // LONG ENTRY
-    if longTrigger
-        strategy.entry("Long", strategy.long, qty=orderQty())
-        // Set initial stop loss
-        tradeStopLoss := close - slDistance
-        
-    // SHORT ENTRY  
-    if enableShorts and shortTrigger
-        strategy.entry("Short", strategy.short, qty=orderQty())
-        // Set initial stop loss
-        tradeStopLoss := close + slDistance
+    if aggressiveEntries
+        // AGGRESSIVE MODE - Allow reversals and immediate entries
+        // LONG ENTRY - close shorts and go long
+        if longTrigger
+            // If we're short, close the position first
+            if strategy.position_size < 0
+                strategy.close("Short")
+            
+            // Reset trailing stop before new trade
+            tradeStopLoss := na
+            
+            // Enter long (or add to existing long)
+            if strategy.position_size <= 0
+                strategy.entry("Long", strategy.long, qty=orderQty())
+                // Set initial stop loss
+                tradeStopLoss := close - slDistance
+            
+        // SHORT ENTRY - close longs and go short
+        if enableShorts and shortTrigger
+            // If we're long, close the position first
+            if strategy.position_size > 0
+                strategy.close("Long")
+            
+            // Reset trailing stop before new trade  
+            tradeStopLoss := na
+            
+            // Enter short (or add to existing short)
+            if strategy.position_size >= 0
+                strategy.entry("Short", strategy.short, qty=orderQty())
+                // Set initial stop loss
+                tradeStopLoss := close + slDistance
+    else
+        // CONSERVATIVE MODE - Only enter when flat
+        if strategy.position_size == 0
+            // Reset trailing stop before new trade
+            tradeStopLoss := na
+            
+            // LONG ENTRY
+            if longTrigger
+                strategy.entry("Long", strategy.long, qty=orderQty())
+                // Set initial stop loss
+                tradeStopLoss := close - slDistance
+                
+            // SHORT ENTRY  
+            if enableShorts and shortTrigger
+                strategy.entry("Short", strategy.short, qty=orderQty())
+                // Set initial stop loss
+                tradeStopLoss := close + slDistance
 
 // ===== Trailing Stop Logic =====
 if strategy.position_size > 0
@@ -208,6 +272,16 @@ if showADXLabel and useADX and barstate.islast
               color=adxStrong ? color.new(color.green, 80) : color.new(color.red, 80),
               textcolor=color.white, size=size.small, style=label.style_label_down)
 
+// ===== Session Visual Highlighting =====
+sessionColor = switch sessionType
+    "Asia" => color.new(color.yellow, 90)
+    "London" => color.new(color.blue, 90)
+    "New York" => color.new(color.purple, 90)
+    "London+NY" => color.new(color.orange, 90)
+    => color.new(color.gray, 90)
+
+bgcolor(useSessionFilter and highlightSession and inTradingSession ? sessionColor : na, title="Trading Session")
+
 // ===== Human-readable alerts (optional) =====
 alertcondition(longTrigger,  title="Long Entry",  message="Long: 21 EMA reclaim in 50 EMA uptrend")
 alertcondition(exitLong,     title="Long Exit",   message="Long exit: Close below 21 EMA")
@@ -236,8 +310,10 @@ mkMsg(evt, side, slPrice) =>
     s += '"atr":' + str.tostring(atr, "#.####") + ','
     s += '"adx":' + (useADX ? str.tostring(math.round(adx, 1)) : "0") + ','
     s += '"adx_filter":' + (useADX ? "true" : "false") + ','
+    s += '"session":' + (useSessionFilter ? '"' + sessionType + '"' : '"All"') + ','
+    s += '"in_session":' + (inTradingSession ? "true" : "false") + ','
     s += '"magic":123456,'
-    s += '"tag":"21-50-ATR' + (useADX ? '-ADX' : '') + '",'
+    s += '"tag":"21-50-ATR' + (useADX ? '-ADX' : '') + (useSessionFilter ? '-' + sessionType : '') + '",'
     s += '"oid":"' + str.tostring(time) + '-' + evt + '-' + side + '",'
     s += '"ts":' + str.tostring(time) + '}'
     s

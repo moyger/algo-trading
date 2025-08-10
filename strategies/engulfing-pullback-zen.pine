@@ -1,0 +1,183 @@
+//@version=6
+strategy("Engulfing Pullback Strategy — ZenLibrary (Auto-Alerts)",
+  overlay=true,
+  initial_capital=100000,
+  commission_type=strategy.commission.percent,
+  commission_value=0.02,
+  pyramiding=0,
+  calc_on_order_fills=true,
+  calc_on_every_tick=true)
+
+// Import ZenLibrary
+import ZenAndTheArtOfTrading/ZenLibrary/10 as zen
+
+// ===== Inputs =====
+var g_setup = "Setup Parameters"
+emaLength = input.int(50, "EMA Length", minval=1, group=g_setup)
+stopSizeInput = input.float(1.0, "Stop Distance (xATR)", minval=0.0, step=0.1, group=g_setup, tooltip="Stop loss distance from highs/lows as an ATR multiplier")
+riskReward = input.float(1.0, "Risk:Reward", minval=0.1, step=0.1, group=g_setup, tooltip="Risk:Reward profile for target calculation")
+signalType = input.string("Both", "Enable Signals", options=["Both", "Long", "Short"], group=g_setup, tooltip="Enable/disable long/short signals")
+
+var g_risk = "Risk Management"
+useRiskSize = input.bool(true, "Size by Risk % of Equity", group=g_risk)
+riskPct = input.float(1.0, "Risk % per Trade", step=0.1, group=g_risk)
+useLots = input.bool(true, "Use Lots", group=g_risk, tooltip="Use lots instead of units (rounds position size to multiples of 100,000)")
+
+var g_filters = "Additional Filters"
+useSwingFilter = input.bool(true, "Use Swing High/Low Filter", group=g_filters)
+maxATRMultiple = input.float(2.0, "Max Engulfing Size (xATR)", minval=0.5, step=0.1, group=g_filters, tooltip="Maximum engulfing candle size to avoid massive spikes")
+aggressiveEntries = input.bool(true, "Aggressive Entries", group=g_filters, tooltip="Allow entries even when in opposite position")
+
+// Check what signals are enabled 
+takeLongs = signalType == "Both" or signalType == "Long"
+takeShorts = signalType == "Both" or signalType == "Short"
+
+// ===== Core Calculations =====
+ema = ta.ema(close, emaLength)
+currentATR = ta.atr(14)
+stopSize = currentATR * stopSizeInput
+
+// ===== Signal Variables =====
+var float longStopDistance = na
+var float shortStopDistance = na
+var float tradeStopPrice = na
+var float tradeTargetPrice = na
+
+// ===== Signal Rules =====
+// LONG SIGNAL RULES:
+// Rule 1: Bullish engulfing above EMA (with max 1 bar below EMA in last 3 bars)
+rule1L = close > ema and zen.barsBelowMA(3, ema) <= 1 and zen.isBullishEC()
+
+// Rule 2: Current or previous bar is swing low (7-bar period)
+rule2L = useSwingFilter ? (low == ta.lowest(low, 7) or low[1] == ta.lowest(low, 7)) : true
+
+// Rule 3: Engulfing candle is not too massive (avoid spikes)
+rule3L = close < ta.highest(open, 5) and ta.tr < (currentATR * maxATRMultiple)
+
+validLong = takeLongs and rule1L and rule2L and rule3L
+
+// SHORT SIGNAL RULES:
+// Rule 1: Bearish engulfing below EMA (with max 1 bar above EMA in last 3 bars)
+rule1S = close < ema and zen.barsAboveMA(3, ema) <= 1 and zen.isBearishEC()
+
+// Rule 2: Current or previous bar is swing high (7-bar period)
+rule2S = useSwingFilter ? (high == ta.highest(high, 7) or high[1] == ta.highest(high, 7)) : true
+
+// Rule 3: Engulfing candle is not too massive (avoid spikes)
+rule3S = close > ta.lowest(open, 5) and ta.tr < (currentATR * maxATRMultiple)
+
+validShort = takeShorts and rule1S and rule2S and rule3S
+
+// ===== Stop Loss & Target Calculation =====
+if validLong
+    longStopDistance := close - ta.lowest(low, 5) + stopSize
+    tradeStopPrice := close - longStopDistance
+    tradeTargetPrice := close + longStopDistance * riskReward
+
+if validShort
+    shortStopDistance := ta.highest(high, 5) - close + stopSize
+    tradeStopPrice := close + shortStopDistance
+    tradeTargetPrice := close - shortStopDistance * riskReward
+
+// ===== Strategy Entries =====
+if aggressiveEntries
+    // AGGRESSIVE MODE - Allow position flipping
+    if validLong
+        if strategy.position_size < 0
+            strategy.close("Short")
+        if strategy.position_size <= 0
+            qty = zen.getFxPositionSize(riskPct, zen.toWhole(longStopDistance), useLots, strategy.equity)
+            strategy.entry("Long", strategy.long, qty=qty)
+    
+    if validShort
+        if strategy.position_size > 0
+            strategy.close("Long")
+        if strategy.position_size >= 0
+            qty = zen.getFxPositionSize(riskPct, zen.toWhole(shortStopDistance), useLots, strategy.equity)
+            strategy.entry("Short", strategy.short, qty=qty)
+else
+    // CONSERVATIVE MODE - Only enter when flat
+    if strategy.position_size == 0
+        if validLong
+            qty = zen.getFxPositionSize(riskPct, zen.toWhole(longStopDistance), useLots, strategy.equity)
+            strategy.entry("Long", strategy.long, qty=qty)
+        
+        if validShort
+            qty = zen.getFxPositionSize(riskPct, zen.toWhole(shortStopDistance), useLots, strategy.equity)
+            strategy.entry("Short", strategy.short, qty=qty)
+
+// ===== Exit Management =====
+if strategy.position_size > 0
+    strategy.exit("Long Exit", from_entry="Long", limit=tradeTargetPrice, stop=tradeStopPrice)
+
+if strategy.position_size < 0
+    strategy.exit("Short Exit", from_entry="Short", limit=tradeTargetPrice, stop=tradeStopPrice)
+
+// ===== Visuals =====
+plot(ema, "EMA", color=color.red, linewidth=2)
+
+// Entry signals
+plotshape(validLong, "Bullish Engulfing", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small)
+plotshape(validShort, "Bearish Engulfing", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small)
+
+// Stop loss and target levels (show for 2 bars for visibility)
+plot(validLong or validLong[1] ? (validLong ? tradeStopPrice : tradeStopPrice[1]) : na, 
+     "Long Stop Price", color=color.red, style=plot.style_linebr, linewidth=1)
+plot(validShort or validShort[1] ? (validShort ? tradeStopPrice : tradeStopPrice[1]) : na, 
+     "Short Stop Price", color=color.red, style=plot.style_linebr, linewidth=1)
+plot(validLong or validLong[1] ? (validLong ? tradeTargetPrice : tradeTargetPrice[1]) : na, 
+     "Long Target Price", color=color.green, style=plot.style_linebr, linewidth=1)
+plot(validShort or validShort[1] ? (validShort ? tradeTargetPrice : tradeTargetPrice[1]) : na, 
+     "Short Target Price", color=color.green, style=plot.style_linebr, linewidth=1)
+
+// ===== Alerts =====
+alertcondition(validLong or validShort, "Engulfing Signal", "Pullback signal for {{ticker}}")
+alertcondition(validLong, "Long Engulfing Signal", "Long: Bullish engulfing pullback signal")
+alertcondition(validShort, "Short Engulfing Signal", "Short: Bearish engulfing pullback signal")
+
+// ===== Automated Webhook Alerts to Cloudflare =====
+tvToken = "k9P$Xz83!vW@b12N#rTe"   // must match WEBHOOK_SECRET in Worker
+acctKey = "FTMO"
+
+mkMsg(evt, side, slPrice, tpPrice) =>
+    // Risk sent as USD-equivalent; EA converts to lots
+    stopDist = side == "BUY" ? longStopDistance : shortStopDistance
+    qtyUSD = zen.getFxPositionSize(riskPct, zen.toWhole(stopDist), false, strategy.equity)  // Get units for webhook
+    
+    // build JSON string safely over multiple lines
+    s = '{"token":"' + tvToken + '",'
+    s += '"account":"' + acctKey + '",'
+    s += '"event":"' + evt + '",'
+    s += '"symbol":"' + syminfo.ticker + '",'
+    s += '"side":"' + side + '",'
+    s += '"qty_usd":' + str.tostring(math.round(qtyUSD)) + ','
+    s += '"sl":' + str.tostring(slPrice, "#.####") + ','
+    s += '"tp":' + str.tostring(tpPrice, "#.####") + ','
+    s += '"price":' + str.tostring(close, "#.####") + ','
+    s += '"atr":' + str.tostring(currentATR, "#.####") + ','
+    s += '"magic":123459,'  // Unique magic number for engulfing strategy
+    s += '"tag":"Engulfing-ZenLib",'
+    s += '"oid":"' + str.tostring(time) + '-' + evt + '-' + side + '",'
+    s += '"ts":' + str.tostring(time) + '}'
+    s
+
+// Triggers (one alert per bar close)
+newLong = validLong and strategy.position_size <= 0
+newShort = validShort and strategy.position_size >= 0
+
+if newLong
+    slPrice = math.round(tradeStopPrice * 10000) / 10000
+    tpPrice = math.round(tradeTargetPrice * 10000) / 10000
+    alert(mkMsg("entry","BUY", slPrice, tpPrice), alert.freq_once_per_bar_close)
+
+if newShort
+    slPrice = math.round(tradeStopPrice * 10000) / 10000
+    tpPrice = math.round(tradeTargetPrice * 10000) / 10000
+    alert(mkMsg("entry","SELL", slPrice, tpPrice), alert.freq_once_per_bar_close)
+
+// Exits (if needed for manual management)
+if strategy.position_size > 0 and (close < ema or strategy.position_size[1] == 0)
+    alert(mkMsg("exit","SELL", 0.0, 0.0), alert.freq_once_per_bar_close)
+
+if strategy.position_size < 0 and (close > ema or strategy.position_size[1] == 0)
+    alert(mkMsg("exit","BUY", 0.0, 0.0), alert.freq_once_per_bar_close)

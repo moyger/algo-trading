@@ -1,0 +1,147 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ZenAndTheArtOfTrading / www.PineScriptMastery.com
+// @version=6
+strategy(
+     title = "FX Breakout Fader", 
+     currency = "USD", 
+     initial_capital = 10000, 
+     calc_on_order_fills=true,
+     // Pepperstone margin & costs:
+     margin_long = 3.33,
+     margin_short = 3.33, 
+     commission_type = strategy.commission.cash_per_contract, 
+     commission_value = 0.000035
+     )
+
+//! Import ZenLibrary
+import ZenAndTheArtOfTrading/ZenLibrary/10 as zen
+
+//! Get user input
+var string G_STRATEGY       = "Strategy Settings"
+string INPUT_TIMEFRAME      = input.timeframe(title="Higher Timeframe", defval="D", group=G_STRATEGY)
+float INPUT_STRETCH         = input.float(title="Limit Order ATR Stretch", defval=1.0, group=G_STRATEGY, display=display.none, tooltip="ATR X from previous HTF high/low to place buy/short orders.")
+float INPUT_RISKRATIO       = input.float(title="Risk:Reward", defval=1.0, group=G_STRATEGY, display=display.none, tooltip="Risk:Reward ratio (2 = 2x profit target distance vs stop loss distance)")
+float INPUT_SL_MULTIPLIER   = input.float(title="Stop Multiplier", defval=2.0, group=G_STRATEGY, display=display.none, tooltip="Stop Loss ATR multiplier (2 = 2x ATR from limit order price)")
+bool INPUT_CANCEL_ORDERS    = input.bool(title="Cancel Orders After Fill", defval=true, group=G_STRATEGY, display=display.none, tooltip="If an order is filled, cancel the other order (eg. if a bullish breakout is triggered, cancel the short breakout order)")
+bool INPUT_USE_TRAILSTOP    = input.bool(title="Use Trailing Stop", defval=true, group=G_STRATEGY, display=display.none, tooltip="Enable/Disable ATR based trailing stop exit.")
+var string G_FILTERS        = "Strategy Filters"
+bool INPUT_HTF_EMA_FILTER   = input.bool(title="Use HTF EMA Filter", defval=true, group=G_FILTERS, display=display.none, tooltip="Enable/Disable HTF EMA filter.")
+int INPUT_HTF_EMA_LENGTH    = input.int(title="HTF EMA Filter Length", defval=20, group=G_FILTERS, display=display.none, tooltip="HTF EMA period length.")
+var string G_TESTER         = "Backtesting Settings"
+bool INPUT_USE_LOTS         = input.bool(title="Use Lots", defval=true, group=G_TESTER, tooltip="Use lots instead of units (rounds position size to multiplies of 1,000, 10,000 or 100,000)", display=display.none)
+float INPUT_RISK_PER_TRADE  = input.float(title="Risk Per Trade", defval=1.0, group=G_TESTER, tooltip="Your desired risk per trade as % of account balance (as a whole number)", display=display.none)
+
+//! Non-repainting and non-cheating security function reference
+rp_security(_symbol, _timeframe, _src) => request.security(_symbol, _timeframe, _src[1], lookahead=barmerge.lookahead_on, gaps=barmerge.gaps_off)
+
+//! Long order variables
+var float longStopOrder = na
+var float longStopLoss = na
+var float longTarget = na
+
+//! Short order variables
+var float shortStopOrder = na
+var float shortStopLoss = na
+var float shortTarget = na
+
+//! General variables
+var bool tookTradeToday = false
+var bool cancelledPendingOrders = false
+
+//! Get HTF data
+dailyOpen   = rp_security(syminfo.tickerid, INPUT_TIMEFRAME, open)
+dailyHigh   = rp_security(syminfo.tickerid, INPUT_TIMEFRAME, high)
+dailyLow    = rp_security(syminfo.tickerid, INPUT_TIMEFRAME, low)
+dailyClose  = rp_security(syminfo.tickerid, INPUT_TIMEFRAME, close)
+dailyEMA    = rp_security(syminfo.tickerid, INPUT_TIMEFRAME, ta.ema(close, INPUT_HTF_EMA_LENGTH))
+
+//! Get indicator values
+float atr               = ta.atr(14)
+
+//! Check filters
+bool readyToTrade               = not na(atr)
+bool generalFilters             = readyToTrade
+bool shortSetupConditionsMet    = generalFilters and (not INPUT_HTF_EMA_FILTER or dailyClose < dailyEMA)
+bool longSetupConditionsMet     = generalFilters and (not INPUT_HTF_EMA_FILTER or dailyClose > dailyEMA)
+bgcolor(shortSetupConditionsMet ? color.red : na)
+bgcolor(longSetupConditionsMet  ? color.green : na)
+bgcolor(not shortSetupConditionsMet and not longSetupConditionsMet ? color.gray : na)
+
+//! Detect unique breakout for today
+bool newDay = bool(ta.change(time(INPUT_TIMEFRAME)))
+bgcolor(newDay ? color.new(color.white, 99) : na, force_overlay=true)
+
+//! If a new day has begun, place our pending orders
+if (newDay)
+    // Cancel any pending orders from yesterday
+    strategy.cancel("Short Entry")
+    strategy.cancel("Long Entry")
+    tookTradeToday  := false
+
+    // If we are flat with no open trades, we are free to place new orders
+    if (strategy.position_size == 0)
+        shortStopOrder  := dailyHigh + (atr * INPUT_STRETCH)
+        shortStopLoss   := shortStopOrder + (atr * INPUT_SL_MULTIPLIER)
+        shortStopDist   =  math.abs(shortStopLoss - shortStopOrder)
+        shortTargetDist =  shortStopDist * INPUT_RISKRATIO
+        shortTarget     := shortStopOrder - shortTargetDist
+
+        longStopOrder   := dailyLow  - (atr * INPUT_STRETCH)
+        longStopLoss    := longStopOrder - (atr * INPUT_SL_MULTIPLIER)
+        longStopDist    =  math.abs(longStopLoss - longStopOrder)
+        longTargetDist  = longStopDist * INPUT_RISKRATIO
+        longTarget      := longStopOrder + longTargetDist
+
+        if (shortSetupConditionsMet)
+            strategy.order("Short Entry", strategy.short, qty=zen.getFxPositionSize(INPUT_RISK_PER_TRADE, zen.toWhole(shortStopLoss - shortStopOrder), lots=INPUT_USE_LOTS), limit=shortStopOrder)
+            cancelledPendingOrders := false
+        else
+            shortStopOrder := na
+        
+        if (longSetupConditionsMet)
+            strategy.order("Long Entry", strategy.long, qty=zen.getFxPositionSize(INPUT_RISK_PER_TRADE, zen.toWhole(longStopOrder - longStopLoss), lots=INPUT_USE_LOTS), limit=longStopOrder)
+            cancelledPendingOrders := false
+        else 
+            longStopOrder := na
+
+//! Update trailing stop 
+if (INPUT_USE_TRAILSTOP)
+    shortTarget := na 
+    longTarget := na
+    if (strategy.position_size > 0) // Long trailing stop
+        float newLongStop = low - (atr * INPUT_SL_MULTIPLIER)
+        if (newLongStop > longStopLoss)
+            longStopLoss := newLongStop
+    if (strategy.position_size < 0) // Short trailing stop
+        float newShortStop = high + (atr * INPUT_SL_MULTIPLIER)
+        if (newShortStop < shortStopLoss)
+            shortStopLoss := newShortStop
+
+//! Check stops & targets being hit
+strategy.exit(id="Long Exit", from_entry="Long Entry", limit=longTarget, stop=longStopLoss)
+strategy.exit(id="Short Exit", from_entry="Short Entry", limit=shortTarget, stop=shortStopLoss)
+
+//! For stopping drawing the order lines and cancelling any remaining buy/short orders if necessary
+if (strategy.equity != strategy.equity[1] and not tookTradeToday)
+    tookTradeToday := true
+    if (INPUT_CANCEL_ORDERS and not cancelledPendingOrders)
+        cancelledPendingOrders := true
+        strategy.cancel("Short Entry")
+        strategy.cancel("Long Entry")
+
+//! Draw indicator data 
+plot(dailyEMA, force_overlay=true, color=color.white, display=display.pane, title="HTF EMA")
+
+//! Draw highs and lows to the chart
+plot(newDay ? na : dailyHigh, color=color.yellow, linewidth=2, style=plot.style_linebr, display=display.pane, force_overlay=true, title="HTF High")
+plot(newDay ? na : dailyLow, color=color.blue, linewidth=2, style=plot.style_linebr, display=display.pane, force_overlay=true, title="HTF Low")
+
+//! Draw stops & targets
+plot(strategy.position_size > 0 ? longStopLoss : na, color=color.red, style=plot.style_linebr, force_overlay=true, title="Trade Stop")
+plot(strategy.position_size > 0 ? longTarget : na, color=color.green, style=plot.style_linebr, force_overlay=true, title="Trade Target")
+plot(strategy.position_size < 0 ? shortStopLoss : na, color=color.red, style=plot.style_linebr, force_overlay=true, title="Trade Stop")
+plot(strategy.position_size < 0 ? shortTarget : na, color=color.green, style=plot.style_linebr, force_overlay=true, title="Trade Target")
+
+//! Draw entries 
+plot(tookTradeToday or newDay ? na : longStopOrder, color=color.gray, force_overlay=true, style=plot.style_linebr, title="Long Entry Price")
+plot(tookTradeToday or newDay ? na : shortStopOrder, color=color.gray, force_overlay=true, style=plot.style_linebr, title="Short Entry Price")

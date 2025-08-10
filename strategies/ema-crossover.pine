@@ -1,0 +1,116 @@
+//@version=6
+indicator("EMA Crossover Signals", overlay=true)
+
+// ===== Inputs =====
+emaLength = input.int(50, "EMA Length", minval=1, tooltip="Exponential moving average period")
+confirmationBars = input.int(7, "Confirmation Bars", minval=1, maxval=20, tooltip="Number of bars required on opposite side before confirming signal")
+signalType = input.string("Both", "Enable Signals", options=["Both", "Long", "Short"], tooltip="Enable/disable long/short signals")
+
+// Choppy Market Filters
+var g_filters = "Choppy Market Filters"
+useATRFilter = input.bool(true, "Use ATR Volatility Filter", group=g_filters, tooltip="Only trade when market has sufficient volatility")
+atrLength = input.int(20, "ATR Period", minval=5, maxval=50, group=g_filters)
+atrMultiplier = input.float(1.1, "ATR Threshold Multiplier", minval=0.5, maxval=3.0, step=0.1, group=g_filters, tooltip="Current ATR must be X times above average ATR")
+
+useSlopeFilter = input.bool(true, "Use EMA Slope Filter", group=g_filters, tooltip="Only trade when EMA is trending (not flat)")
+slopeLength = input.int(5, "EMA Slope Lookback", minval=3, maxval=15, group=g_filters)
+minSlope = input.float(0.0001, "Minimum EMA Slope", minval=0.0, step=0.0001, group=g_filters, tooltip="Minimum EMA slope required for valid signals")
+
+useDistanceFilter = input.bool(true, "Use Price Distance Filter", group=g_filters, tooltip="Require minimum distance from EMA for crossover")
+distanceMultiplier = input.float(0.3, "Distance ATR Multiplier", minval=0.1, maxval=1.0, step=0.1, group=g_filters, tooltip="Minimum crossover distance as ATR multiple")
+
+// Check what signals are enabled 
+takeLongs = signalType == "Both" or signalType == "Long"
+takeShorts = signalType == "Both" or signalType == "Short"
+
+// ===== Core Calculations =====
+ema = ta.ema(close, emaLength)
+
+// ===== Choppy Market Filter Calculations =====
+// ATR Volatility Filter
+currentATR = ta.atr(14)
+avgATR = ta.sma(currentATR, atrLength)
+atrFilter = not useATRFilter or (currentATR > avgATR * atrMultiplier)
+
+// EMA Slope Filter
+emaSlope = math.abs(ema - ema[slopeLength]) / slopeLength
+slopeFilter = not useSlopeFilter or (emaSlope > minSlope)
+
+// Price Distance Filter  
+minDistance = currentATR * distanceMultiplier
+distanceFilter = not useDistanceFilter
+
+// ===== Helper Function =====
+// Count how many consecutive bars were below EMA
+barsConsecutivelyBelow(lookback, ma) =>
+    count = 0
+    for i = 1 to lookback by 1
+        if close[i] < ma[i]
+            count += 1
+        else
+            break
+    count
+
+// Count how many consecutive bars were above EMA  
+barsConsecutivelyAbove(lookback, ma) =>
+    count = 0
+    for i = 1 to lookback by 1
+        if close[i] > ma[i]
+            count += 1
+        else
+            break
+    count
+
+// ===== Signal Logic =====
+// Long signal: Price crosses above EMA after being below for confirmation period
+longCrossover = ta.crossover(close, ema)
+longConfirmation = barsConsecutivelyBelow(confirmationBars, ema) >= confirmationBars
+// Price distance filter for longs
+longDistanceOk = not useDistanceFilter or (close > ema + minDistance)
+
+// Short signal: Price crosses below EMA after being above for confirmation period
+shortCrossover = ta.crossunder(close, ema)
+shortConfirmation = barsConsecutivelyAbove(confirmationBars, ema) >= confirmationBars
+// Price distance filter for shorts
+shortDistanceOk = not useDistanceFilter or (close < ema - minDistance)
+
+// Combine all filters
+allFiltersPass = atrFilter and slopeFilter
+validLong = takeLongs and longCrossover and longConfirmation and longDistanceOk and allFiltersPass
+validShort = takeShorts and shortCrossover and shortConfirmation and shortDistanceOk and allFiltersPass
+
+// ===== Visuals =====
+// Plot EMA - color changes based on slope filter
+emaColor = slopeFilter ? color.blue : color.gray
+plot(ema, "EMA", color=emaColor, linewidth=2)
+
+// Plot signals
+plotshape(validLong, "Long Signal", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.normal, text="BUY")
+plotshape(validShort, "Short Signal", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.normal, text="SELL")
+
+// ===== Filter Status Indicators =====
+// ATR Filter Status - small dot when ATR is sufficient
+plotshape(useATRFilter and atrFilter ? low - (currentATR*0.5) : na, title="ATR Filter Active", 
+          style=shape.circle, location=location.absolute, size=size.tiny, 
+          color=color.new(color.orange, 30), text="")
+
+// Combined Filter Status - background color
+bgcolor(allFiltersPass ? color.new(color.green, 95) : color.new(color.red, 95), title="Filter Status Background")
+
+// Filter status label (optional)
+showFilterStatus = input.bool(false, "Show Filter Status Label", tooltip="Display current filter status on chart")
+if showFilterStatus and barstate.islast
+    statusText = "Filters: "
+    statusText += useATRFilter ? (atrFilter ? "ATR✓ " : "ATR✗ ") : ""
+    statusText += useSlopeFilter ? (slopeFilter ? "Slope✓ " : "Slope✗ ") : ""
+    statusText += useDistanceFilter ? "Dist✓" : ""
+    
+    label.new(bar_index, low - (currentATR*2), 
+              text=statusText, 
+              color=allFiltersPass ? color.new(color.green, 80) : color.new(color.red, 80),
+              textcolor=color.white, size=size.small, style=label.style_label_up)
+
+// ===== Alerts =====
+alertcondition(validLong, "Long Signal", "Long: Price crossed above EMA after confirmation and filters passed")
+alertcondition(validShort, "Short Signal", "Short: Price crossed below EMA after confirmation and filters passed")
+alertcondition(validLong or validShort, "Any Signal", "EMA crossover signal detected with all filters passed")
