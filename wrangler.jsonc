@@ -1,0 +1,23 @@
+{
+	"name": "tradingview-webhook",
+	"main": "src/index.js",
+	"compatibility_date": "2025-08-09",
+  
+	// Key-Value store (optional, if you want to queue messages)
+	"kv_namespaces": [
+	  {
+		"binding": "QUEUE",
+		"id": "a43aa907cacb4e5ba1ff7353b5112f90",
+		"preview_id": "a43aa907cacb4e5ba1ff7353b5112f90"
+	  }
+	],
+  
+	// Environment variables
+	"vars": {
+	  "WEBHOOK_SECRET": "k9P$Xz83!vW@b12N#rTe"
+	}
+  }
+  
+
+
+  

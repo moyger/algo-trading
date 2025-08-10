@@ -1,0 +1,441 @@
+//@version=6
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// ============================================================================
+// Deadzone Pro Strategy - DaviddTech Multi-Strategy Trading System
+// ============================================================================
+// Credits to @DaviddTech for the inspiration and original components
+// Converted to strategy for backtesting capabilities
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+
+strategy("Deadzone Pro Strategy — Multi-Indicator System (Auto-Alerts)",
+  overlay=true,
+  initial_capital=100000,
+  commission_type=strategy.commission.percent,
+  commission_value=0.02,                   // Bybit futures taker ≈ 0.055%
+  pyramiding=0,
+  calc_on_order_fills=true,
+  calc_on_every_tick=true)
+
+// ===== Credits Section =====
+// Original concepts inspired by:
+// - Hull Moving Average by @Julien_Eche
+// - Waddah Attar Explosion by @LazyBear
+// - Bull Bear Power by @Pinecoders
+// - ADX by @BeikabuOyaji
+// Refactored and enhanced by @DaviddTech
+
+// ================================== INPUT PARAMETERS ==================================
+// Trading System Settings Section
+var g_system = "Trading System"
+bool atp_show_dashboard = input.bool(true, "Show Dashboard", group=g_system, tooltip="Display the system dashboard with current status and signals")
+string atp_trade_style = input.string("Balanced", "Trading Style", options=["Aggressive", "Balanced", "Conservative"], group=g_system, tooltip="Aggressive = more signals, Conservative = fewer high quality signals")
+int atp_entry_filter = input.int(3, "Signal Filter (bars)", minval=1, maxval=10, group=g_system, tooltip="Minimum bars between entry signals to prevent overtrading")
+
+// Position Sizing Settings
+var g_position = "Position Sizing"
+bool useRiskSize = input.bool(true, "Size by Risk % of Equity", group=g_position)
+float riskPct = input.float(0.5, "Risk % per Trade", step=0.1, group=g_position)      // e.g., 0.5 = 0.5%
+
+// Baseline Indicator Settings
+var g_baseline = "Baseline (Adaptive Hull MA)"
+int atp_hull_length = input.int(21, "Hull Length", minval=5, maxval=100, group=g_baseline, tooltip="Length parameter for Hull Moving Average calculation")
+string atp_hull_source = input.string("close", "Price Source", options=["close", "open", "high", "low", "hl2", "hlc3", "ohlc4"], group=g_baseline, tooltip="Source data for Hull Moving Average calculation")
+int atp_hull_thickness = input.int(3, "Hull Line Thickness", minval=1, maxval=5, group=g_baseline, tooltip="Visual thickness of the Hull Moving Average line")
+
+// Confirmation Settings
+var g_confirmation = "Confirmation Indicators"
+bool atp_use_adaptive_deadzone = input.bool(true, "Use Adaptive Deadzone", group=g_confirmation, tooltip="Calculate deadzone based on True Range instead of fixed value")
+int atp_exp_deadzone = input.int(20, "Fixed Explosion Threshold", minval=5, maxval=50, group=g_confirmation, tooltip="No-trade zone threshold for the explosion indicator (used when adaptive deadzone is off)")
+float atp_exp_deadzone_mult = input.float(3.7, "Adaptive Deadzone Multiplier", minval=1, maxval=10, step=0.1, group=g_confirmation, tooltip="Multiplier applied to RMA of True Range for adaptive deadzone")
+int atp_exp_tr_length = input.int(100, "Adaptive Deadzone Length", minval=10, maxval=200, group=g_confirmation, tooltip="Length for the RMA of True Range used in adaptive deadzone calculation")
+int atp_exp_sensitivity = input.int(150, "Explosion Sensitivity", minval=50, maxval=300, group=g_confirmation, tooltip="Higher values increase sensitivity to price movements")
+int atp_exp_fast = input.int(20, "Explosion Fast Length", minval=5, maxval=50, group=g_confirmation, tooltip="Fast EMA length for explosion calculation")
+int atp_exp_slow = input.int(40, "Explosion Slow Length", minval=10, maxval=80, group=g_confirmation, tooltip="Slow EMA length for explosion calculation")
+int atp_bbp_length = input.int(13, "Power Length", minval=5, maxval=50, group=g_confirmation, tooltip="Length parameter for the Bull/Bear Power indicator")
+
+// Volatility Filter Settings
+var g_filter = "Volatility Filter"
+int atp_adx_length = input.int(14, "ADX Length", minval=5, maxval=50, group=g_filter, tooltip="Length parameter for ADX calculation")
+float atp_adx_threshold = input.float(25, "ADX Threshold", minval=10, maxval=50, step=0.5, group=g_filter, tooltip="Minimum ADX value required for valid signals")
+
+// Stop Loss Settings
+var g_stops = "Stop Loss & Risk Management"
+int atp_stop_length = input.int(22, "ATR Period", minval=5, maxval=50, group=g_stops, tooltip="ATR lookback period for stop loss calculation")
+float atp_stop_mult = input.float(3.0, "ATR Multiplier", minval=0.5, maxval=10, step=0.1, group=g_stops, tooltip="Multiplier applied to ATR for stop loss distance calculation")
+bool atp_stop_highlight = input.bool(true, "Highlight Active State", group=g_stops, tooltip="Fill the chart area based on current market position")
+
+// Color Settings
+var g_colors = "Visual Settings"
+color atp_bull_color = input.color(#4CAF50, "Bullish Color", group=g_colors)
+color atp_bear_color = input.color(#FF5252, "Bearish Color", group=g_colors)
+color atp_neutral_color = input.color(#E0E0E0, "Neutral Color", group=g_colors)
+color atp_dashboard_bg = input.color(color.new(#263238, 20), "Dashboard Background", group=g_colors)
+color atp_dashboard_row = input.color(color.new(#37474F, 64), "Dashboard Row Color", group=g_colors)
+
+// ================================== FUNCTIONS ==================================
+
+// Adaptive Hull Moving Average calculation
+atp_hull_calc(src, length) =>
+    // Weighted Moving Average calculation for Hull
+    atp_wma1 = ta.wma(src, length/2)
+    atp_wma2 = ta.wma(src, length)
+    atp_diff = 2 * atp_wma1 - atp_wma2
+    atp_hull = ta.wma(atp_diff, math.round(math.sqrt(length)))
+    atp_hull
+
+// Enhanced ADX calculation with smoothing
+atp_adx_calc(length) =>
+    // True Range
+    atp_tr = math.max(math.max(high - low, math.abs(high - nz(close[1]))), math.abs(low - nz(close[1])))
+    
+    // +DM and -DM
+    atp_dm_plus = high - nz(high[1]) > nz(low[1]) - low ? math.max(high - nz(high[1]), 0) : 0
+    atp_dm_minus = nz(low[1]) - low > high - nz(high[1]) ? math.max(nz(low[1]) - low, 0) : 0
+    
+    // Smoothed values
+    atp_tr_smooth = 0.0
+    atp_tr_smooth := nz(atp_tr_smooth[1]) - nz(atp_tr_smooth[1]) / length + atp_tr
+    
+    atp_dm_plus_smooth = 0.0
+    atp_dm_plus_smooth := nz(atp_dm_plus_smooth[1]) - nz(atp_dm_plus_smooth[1]) / length + atp_dm_plus
+    
+    atp_dm_minus_smooth = 0.0
+    atp_dm_minus_smooth := nz(atp_dm_minus_smooth[1]) - nz(atp_dm_minus_smooth[1]) / length + atp_dm_minus
+    
+    // DI+ and DI-
+    atp_di_plus = atp_dm_plus_smooth / atp_tr_smooth * 100
+    atp_di_minus = atp_dm_minus_smooth / atp_tr_smooth * 100
+    
+    // DX and ADX
+    atp_dx = math.abs(atp_di_plus - atp_di_minus) / (atp_di_plus + atp_di_minus) * 100
+    atp_adx = ta.sma(atp_dx, length)
+    
+    [atp_adx, atp_di_plus, atp_di_minus]
+
+// Explosion Indicator (based on Waddah Attar)
+atp_explosion_calc(source, fast_length, slow_length, sensitivity, channel_length, mult) =>
+    // MACD-style difference between fast and slow EMAs
+    atp_fast_ma = ta.ema(source, fast_length)
+    atp_slow_ma = ta.ema(source, slow_length)
+    atp_macd = atp_fast_ma - atp_slow_ma
+    
+    // Calculate momentum change
+    atp_macd_diff = (atp_macd - atp_macd[1]) * sensitivity
+    
+    // Bollinger Bands for volatility measurement
+    atp_bb_basis = ta.sma(source, channel_length)
+    atp_bb_dev = mult * ta.stdev(source, channel_length)
+    atp_bb_upper = atp_bb_basis + atp_bb_dev
+    atp_bb_lower = atp_bb_basis - atp_bb_dev
+    atp_bb_width = atp_bb_upper - atp_bb_lower
+    
+    // Determine Up and Down momentum
+    atp_trend_up = atp_macd_diff >= 0 ? atp_macd_diff : 0
+    atp_trend_down = atp_macd_diff < 0 ? -1 * atp_macd_diff : 0
+    
+    [atp_trend_up, atp_trend_down, atp_bb_width]
+
+// Bull Bear Power calculation
+atp_bbpower_calc(source, length) =>
+    atp_ema = ta.ema(source, length)
+    atp_bull_power = high - atp_ema
+    atp_bear_power = low - atp_ema
+    atp_bbp = atp_bull_power + atp_bear_power
+    atp_bbp
+
+// Gradient color generator based on ADX intensity
+atp_dynamic_color(base_color, intensity, threshold) =>
+    // Calculate transparency based on intensity relative to threshold
+    atp_intensity_ratio = math.min(intensity / threshold, 2)
+    atp_transparency = math.max(0, math.min(90, 90 - atp_intensity_ratio * 45))
+    color.new(base_color, math.round(atp_transparency))
+
+// ================================== CALCULATIONS ==================================
+
+// Parse source input
+atp_src = switch atp_hull_source
+    "close" => close
+    "open" => open
+    "high" => high
+    "low" => low
+    "hl2" => hl2
+    "hlc3" => hlc3
+    "ohlc4" => ohlc4
+    => close
+
+// Calculate Baseline (Hull Moving Average)
+atp_hull = atp_hull_calc(atp_src, atp_hull_length)
+atp_hull_prev = atp_hull[1]
+atp_hull_slope = atp_hull - atp_hull_prev
+
+// Calculate Bull Bear Power for additional confirmation
+atp_bbp = atp_bbpower_calc(close, atp_bbp_length)
+atp_bbp_prev = atp_bbp[1]
+
+// Detect Bull Bear Power crossovers
+bool atp_bbp_bull_cross = atp_bbp > 0 and atp_bbp_prev <= 0
+bool atp_bbp_bear_cross = atp_bbp < 0 and atp_bbp_prev >= 0
+
+// Calculate ADX for trend strength filter
+[atp_adx, atp_di_plus, atp_di_minus] = atp_adx_calc(atp_adx_length)
+bool atp_adx_strong = atp_adx > atp_adx_threshold
+
+// Calculate Explosion Indicator (First Confirmation)
+[atp_exp_up, atp_exp_down, atp_exp_volatility] = atp_explosion_calc(close, atp_exp_fast, atp_exp_slow, atp_exp_sensitivity, atp_exp_fast, 2.0)
+
+// Calculate adaptive deadzone based on True Range if enabled
+float atp_tr = ta.tr(true)
+float atp_adaptive_deadzone = ta.rma(atp_tr, atp_exp_tr_length) * atp_exp_deadzone_mult
+float atp_current_deadzone = atp_use_adaptive_deadzone ? atp_adaptive_deadzone : float(atp_exp_deadzone)
+
+bool atp_exp_bull_signal = atp_exp_up > atp_current_deadzone
+bool atp_exp_bear_signal = atp_exp_down > atp_current_deadzone
+
+// Use already calculated Bull Bear Power for confirmation
+bool atp_bbp_bull = atp_bbp > 0
+bool atp_bbp_bear = atp_bbp < 0
+
+// Trend determination from baseline
+int atp_trend_bias = atp_hull_slope > 0 ? 1 : atp_hull_slope < 0 ? -1 : 0
+
+// ================================== TRAILING STOP CALCULATION ===================================
+
+// Supertrend-based trailing stop
+atp_atr = ta.atr(atp_stop_length)
+atp_stop_distance = atp_stop_mult * atp_atr
+
+// Long trade stop level (support during uptrends)
+atp_long_stop = atp_src - atp_stop_distance
+atp_long_stop_prev = nz(atp_long_stop[1], atp_long_stop)
+atp_long_stop := low > atp_long_stop_prev ? math.max(atp_long_stop, atp_long_stop_prev) : atp_long_stop
+
+// Short trade stop level (resistance during downtrends)
+atp_short_stop = atp_src + atp_stop_distance
+atp_short_stop_prev = nz(atp_short_stop[1], atp_short_stop)
+atp_short_stop := high < atp_short_stop_prev ? math.min(atp_short_stop, atp_short_stop_prev) : atp_short_stop
+
+// Determine stop direction (1 = long, -1 = short)
+var int atp_stop_dir = 1
+atp_stop_dir := atp_stop_dir == -1 and high > atp_short_stop_prev ? 1 :
+               atp_stop_dir == 1 and low < atp_long_stop_prev ? -1 :
+               atp_stop_dir
+
+// Detect stop direction changes for signals
+bool atp_stop_bull_signal = atp_stop_dir == 1 and atp_stop_dir[1] == -1
+bool atp_stop_bear_signal = atp_stop_dir == -1 and atp_stop_dir[1] == 1
+
+// ================================== COMBINED SYSTEM SIGNALS ===================================
+
+// Track signal state
+var int bars_since_last_signal = 1000
+bars_since_last_signal := bars_since_last_signal + 1
+
+// Raw signal conditions based on trading style
+bool atp_raw_long = switch atp_trade_style
+    "Aggressive" => atp_hull_slope > 0 and atp_exp_bull_signal and atp_bbp_bull
+    "Conservative" => atp_hull_slope > 0 and atp_exp_bull_signal and atp_bbp_bull and atp_stop_bull_signal and atp_adx_strong
+    => atp_hull_slope > 0 and atp_exp_bull_signal and (atp_bbp_bull or atp_stop_bull_signal) and atp_adx_strong // Balanced
+
+bool atp_raw_short = switch atp_trade_style
+    "Aggressive" => atp_hull_slope < 0 and atp_exp_bear_signal and atp_bbp_bear
+    "Conservative" => atp_hull_slope < 0 and atp_exp_bear_signal and atp_bbp_bear and atp_stop_bear_signal and atp_adx_strong
+    => atp_hull_slope < 0 and atp_exp_bear_signal and (atp_bbp_bear or atp_stop_bear_signal) and atp_adx_strong // Balanced
+
+// Apply entry filter
+bool atp_long_entry = atp_raw_long and bars_since_last_signal >= atp_entry_filter and strategy.position_size == 0
+bool atp_short_entry = atp_raw_short and bars_since_last_signal >= atp_entry_filter and strategy.position_size == 0
+
+// Generate exit signals
+bool atp_long_exit = atp_stop_bear_signal and strategy.position_size > 0
+bool atp_short_exit = atp_stop_bull_signal and strategy.position_size < 0
+
+// ===== Position sizing (risk %) =====
+riskValue = strategy.equity * (riskPct/100.0)
+slDistance = atp_stop_mult * atp_atr
+qtyByRisk = (not na(slDistance) and slDistance > 0) ? riskValue / slDistance : na
+orderQty() =>
+    useRiskSize and not na(qtyByRisk) and qtyByRisk > 0 ? qtyByRisk : 1
+
+// ================================== STRATEGY EXECUTION ===================================
+
+canTakeTrade = not na(atp_atr) and not na(atp_hull)
+
+if canTakeTrade
+    // LONG ENTRY
+    if atp_long_entry
+        strategy.entry("Long", strategy.long, qty=orderQty())
+        bars_since_last_signal := 0
+        
+    // SHORT ENTRY  
+    if atp_short_entry
+        strategy.entry("Short", strategy.short, qty=orderQty())
+        bars_since_last_signal := 0
+
+// EXIT CONDITIONS
+if strategy.position_size > 0
+    // LONG EXITS - Use trailing stop
+    strategy.exit("L-Stop", from_entry="Long", stop=atp_long_stop)
+    
+    // Additional exit on stop signal reversal
+    if atp_long_exit
+        strategy.close("Long")
+
+if strategy.position_size < 0
+    // SHORT EXITS - Use trailing stop
+    strategy.exit("S-Stop", from_entry="Short", stop=atp_short_stop)
+    
+    // Additional exit on stop signal reversal
+    if atp_short_exit
+        strategy.close("Short")
+
+// ================================== PLOTTING ===================================
+
+// Hull Moving Average with dynamic coloring based on ADX strength
+atp_hull_color = atp_hull_slope > 0 ? atp_dynamic_color(atp_bull_color, atp_adx, atp_adx_threshold) :atp_hull_slope < 0 ? atp_dynamic_color(atp_bear_color, atp_adx, atp_adx_threshold) :atp_neutral_color
+
+atp_hull_plot = plot(atp_hull, "Adaptive Hull MA", color=atp_hull_color, linewidth=atp_hull_thickness)
+
+// Plot trailing stop levels
+atp_long_stop_plot = plot(strategy.position_size > 0 ? atp_long_stop : na, "Long Stop", 
+                         style=plot.style_linebr, linewidth=2, color=color.new(atp_bull_color, 20))
+                         
+atp_short_stop_plot = plot(strategy.position_size < 0 ? atp_short_stop : na, "Short Stop", 
+                          style=plot.style_linebr, linewidth=2, color=color.new(atp_bear_color, 20))
+
+// Fill between price and stop for active positions
+atp_price_plot = plot(ohlc4, "Price", display=display.none)
+
+// Fill colors based on position highlighting setting
+color atp_long_fill = atp_stop_highlight and strategy.position_size > 0 ? color.new(atp_bull_color, 95) : na
+color atp_short_fill = atp_stop_highlight and strategy.position_size < 0 ? color.new(atp_bear_color, 95) : na
+
+fill(atp_price_plot, atp_long_stop_plot, atp_long_fill)
+fill(atp_price_plot, atp_short_stop_plot, atp_short_fill)
+
+// Plot entry signals as shapes
+plotshape(atp_long_entry, title="Buy Signal", style=shape.triangleup, location=location.belowbar, 
+         color=color.new(atp_bull_color, 0), size=size.normal)
+         
+plotshape(atp_short_entry, title="Sell Signal", style=shape.triangledown, location=location.abovebar, 
+         color=color.new(atp_bear_color, 0), size=size.normal)
+
+// Bull Bear Power crossover emoji signals
+plotshape(atp_bbp_bull_cross ? high + (high * 0.002) : na, "Bullish BBP Cross", shape.labelup, location.absolute, 
+         color.new(atp_bull_color, 100), 0, text="🚀", textcolor=color.white, size=size.normal)
+plotshape(atp_bbp_bear_cross ? low - (low * 0.002) : na, "Bearish BBP Cross", shape.labeldown, location.absolute, 
+         color.new(atp_bear_color, 100), 0, text="🐻", textcolor=color.white, size=size.normal)
+
+// ================================== DASHBOARD ===================================
+
+if atp_show_dashboard and barstate.islast
+    var table dashboard = table.new(position.top_right, 3, 8, border_width=1)
+    
+    // Header
+    table.cell(dashboard, 0, 0, "Deadzone Pro", bgcolor=atp_dashboard_bg, text_color=color.white)
+    table.cell(dashboard, 1, 0, "Strategy", bgcolor=atp_dashboard_bg, text_color=color.white)
+    table.cell(dashboard, 2, 0, strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "NEUTRAL", 
+              bgcolor=strategy.position_size > 0 ? color.new(atp_bull_color, 0) : strategy.position_size < 0 ? color.new(atp_bear_color, 0) : atp_dashboard_bg,
+              text_color=color.white)
+    
+    // Position Info
+    table.cell(dashboard, 0, 1, "Position", bgcolor=atp_dashboard_row, text_color=color.white)
+    table.cell(dashboard, 1, 1, strategy.position_size == 0 ? "Flat" : str.tostring(strategy.position_size, "#.####"), 
+              bgcolor=atp_dashboard_row, text_color=color.white)
+    table.cell(dashboard, 2, 1, strategy.position_size == 0 ? "-" : str.tostring(strategy.position_avg_price, "#.####"), bgcolor=atp_dashboard_row, text_color=color.white)
+    
+    // Baseline Status
+    table.cell(dashboard, 0, 2, "Baseline", bgcolor=atp_dashboard_row, text_color=color.white)
+    table.cell(dashboard, 1, 2, atp_hull_slope > 0 ? "Bullish" : atp_hull_slope < 0 ? "Bearish" : "Neutral", 
+              bgcolor=atp_hull_slope > 0 ? color.new(atp_bull_color, 30) : 
+                     atp_hull_slope < 0 ? color.new(atp_bear_color, 30) : atp_dashboard_row,
+              text_color=color.white)
+    table.cell(dashboard, 2, 2, "Hull MA", bgcolor=atp_dashboard_row, text_color=color.white)
+    
+    // Confirmation 1 Status
+    table.cell(dashboard, 0, 3, "Confirmation 1", bgcolor=atp_dashboard_row, text_color=color.white)
+    table.cell(dashboard, 1, 3, atp_exp_bull_signal ? "Bullish" : atp_exp_bear_signal ? "Bearish" : "Neutral", 
+              bgcolor=atp_exp_bull_signal ? color.new(atp_bull_color, 30) : 
+                     atp_exp_bear_signal ? color.new(atp_bear_color, 30) : atp_dashboard_row,
+              text_color=color.white)
+    table.cell(dashboard, 2, 3, "Explosion", bgcolor=atp_dashboard_row, text_color=color.white)
+    
+    // Confirmation 2 Status
+    table.cell(dashboard, 0, 4, "Confirmation 2", bgcolor=atp_dashboard_row, text_color=color.white)
+    table.cell(dashboard, 1, 4, atp_bbp_bull ? "Bullish" : atp_bbp_bear ? "Bearish" : "Neutral", 
+              bgcolor=atp_bbp_bull ? color.new(atp_bull_color, 30) : 
+                     atp_bbp_bear ? color.new(atp_bear_color, 30) : atp_dashboard_row,
+              text_color=color.white)
+    table.cell(dashboard, 2, 4, "Power", bgcolor=atp_dashboard_row, text_color=color.white)
+    
+    // Volatility Filter Status
+    table.cell(dashboard, 0, 5, "ADX Filter", bgcolor=atp_dashboard_row, text_color=color.white)
+    table.cell(dashboard, 1, 5, atp_adx_strong ? "Valid" : "Weak", 
+              bgcolor=atp_adx_strong ? color.new(atp_bull_color, 30) : atp_dashboard_row,
+              text_color=color.white)
+    table.cell(dashboard, 2, 5, str.tostring(math.round(atp_adx, 1)), bgcolor=atp_dashboard_row, text_color=color.white)
+    
+    // Stop Status
+    table.cell(dashboard, 0, 6, "Stop Level", bgcolor=atp_dashboard_row, text_color=color.white)
+    table.cell(dashboard, 1, 6, strategy.position_size > 0 ? "Long Stop" : strategy.position_size < 0 ? "Short Stop" : "No Position", 
+              bgcolor=strategy.position_size > 0 ? color.new(atp_bull_color, 30) : strategy.position_size < 0 ? color.new(atp_bear_color, 30) : atp_dashboard_row,
+              text_color=color.white)
+    table.cell(dashboard, 2, 6, strategy.position_size > 0 ? str.tostring(math.round(atp_long_stop, 2)) : 
+                              strategy.position_size < 0 ? str.tostring(math.round(atp_short_stop, 2)) : "-", 
+              bgcolor=atp_dashboard_row, text_color=color.white)
+    
+    // Trading Style
+    table.cell(dashboard, 0, 7, "Style", bgcolor=atp_dashboard_row, text_color=color.white)
+    table.cell(dashboard, 1, 7, atp_trade_style, bgcolor=atp_dashboard_row, text_color=color.white)
+    table.cell(dashboard, 2, 7, "Risk: " + str.tostring(riskPct) + "%", bgcolor=atp_dashboard_row, text_color=color.white)
+
+// ===== Automated Webhook Alerts to Cloudflare =====
+tvToken = "k9P$Xz83!vW@b12N#rTe"   // must match WEBHOOK_SECRET in Worker
+acctKey = "FTMO"
+
+// Risk sent as USD-equivalent; EA converts to lots
+_rv = strategy.equity * (riskPct/100.0)
+_slDist = atp_stop_mult * atp_atr
+qtyUSD = (not na(_slDist) and _slDist > 0) ? math.round(_rv / _slDist) : 0
+
+mkMsg(evt, side, slPrice) =>
+    // build JSON string safely over multiple lines
+    s = '{"token":"' + tvToken + '",'
+    s += '"account":"' + acctKey + '",'
+    s += '"event":"' + evt + '",'
+    s += '"symbol":"' + syminfo.ticker + '",'
+    s += '"side":"' + side + '",'
+    s += '"qty_usd":' + str.tostring(qtyUSD) + ','
+    s += '"sl":' + str.tostring(slPrice, "#.####") + ','
+    s += '"price":' + str.tostring(close, "#.####") + ','
+    s += '"atr":' + str.tostring(atp_atr, "#.####") + ','
+    s += '"magic":123458,'  // Unique magic number for deadzone strategy
+    s += '"tag":"Deadzone-Pro",'
+    s += '"oid":"' + str.tostring(time) + '-' + evt + '-' + side + '",'
+    s += '"ts":' + str.tostring(time) + '}'
+    s
+
+// Triggers (one alert per bar close)
+newLong = atp_long_entry and strategy.position_size <= 0
+newShort = atp_short_entry and strategy.position_size >= 0
+closeLong = atp_long_exit
+closeShort = atp_short_exit
+
+// Use current close for pre-entry SL reference
+if newLong
+    slPrice = math.round((close - (atp_stop_mult*atp_atr)) * 10000) / 10000
+    alert(mkMsg("entry","BUY", slPrice), alert.freq_once_per_bar_close)
+if newShort
+    slPrice = math.round((close + (atp_stop_mult*atp_atr)) * 10000) / 10000
+    alert(mkMsg("entry","SELL", slPrice), alert.freq_once_per_bar_close)
+
+// Exits just flatten; SL not needed
+if closeLong
+    alert(mkMsg("exit","SELL", 0.0), alert.freq_once_per_bar_close)
+if closeShort
+    alert(mkMsg("exit","BUY", 0.0), alert.freq_once_per_bar_close)
+
+// ================================== ALERTS ===================================
+alertcondition(atp_long_entry, "Long Entry Signal", "Deadzone Pro: Buy Signal")
+alertcondition(atp_short_entry, "Short Entry Signal", "Deadzone Pro: Sell Signal")
+alertcondition(atp_long_exit, "Long Exit Signal", "Deadzone Pro: Exit Long Position")
+alertcondition(atp_short_exit, "Short Exit Signal", "Deadzone Pro: Exit Short Position")

@@ -1,0 +1,277 @@
+//@version=6
+strategy("Range Breakout + EMA Filter — ATR Stop + 21EMA Exit (Auto-Alerts)",
+  overlay=true,
+  initial_capital=100000,
+  commission_type=strategy.commission.percent,
+  commission_value=0.02,                   // Bybit futures taker ≈ 0.055%
+  pyramiding=0,
+  calc_on_order_fills=true,
+  calc_on_every_tick=true)
+
+// ===== Inputs =====
+len21        = input.int(21,  "EMA Fast (Filter)", minval=1)
+len50        = input.int(50,  "EMA Trend Filter", minval=1)
+enableShorts = input.bool(true, "Enable Shorts")
+
+// ===== Range Detection Settings =====
+rangePeriod  = input.int(20, "Range Lookback Period", minval=5, maxval=100)
+minRangeATR  = input.float(2.0, "Minimum Range Size (ATR Multiple)", step=0.1)
+
+atrLen       = input.int(14, "ATR Length", minval=1)
+atrMultSL    = input.float(2.0, "ATR Stop Multiplier", step=0.1)
+
+useRiskSize  = input.bool(true, "Size by Risk % of Equity")
+riskPct      = input.float(0.5, "Risk % per Trade", step=0.1)      // e.g., 0.5 = 0.5%
+
+// ===== Trailing Stop Settings =====
+useTrailingStop = input.bool(true, "Use Trailing Stop")
+trailMultiplier = input.float(1.5, "Trailing Stop ATR Multiplier", step=0.1)
+
+// ===== Take Profit Settings =====
+useTakeProfit = input.bool(false, "Use Take Profit (ATR)")
+atrMultTP = input.float(3.0, "ATR Take Profit Multiplier", step=0.1)
+
+// ===== Core calcs =====
+ema21 = ta.ema(close, len21)
+ema50 = ta.ema(close, len50)
+atr   = ta.atr(atrLen)
+
+// ===== Range Detection =====
+rangeHigh = ta.highest(high, rangePeriod)
+rangeLow  = ta.lowest(low, rangePeriod)
+rangeSize = rangeHigh - rangeLow
+minRangeSize = minRangeATR * atr
+
+// Valid range check
+validRange = rangeSize >= minRangeSize
+
+// ===== Trailing Stop Variables =====
+var float tradeStopLoss = na
+var bool stopLossTriggered = false
+var bool emaExitTriggered = false
+var bool takeProfitTriggered = false
+slDistance = atrMultSL * atr
+trailDistance = trailMultiplier * atr
+
+// ===== Trend Filters =====
+trendUp   = close > ema50 and ema21 > ema50
+trendDown = close < ema50 and ema21 < ema50
+
+// ===== Breakout Conditions =====
+breakoutUp   = close > rangeHigh[1] and validRange
+breakoutDown = close < rangeLow[1] and validRange
+
+// EMA position filters
+aboveEMA21 = close > ema21
+belowEMA21 = close < ema21
+
+// Combined entry conditions
+longTrigger  = trendUp and breakoutUp and aboveEMA21
+shortTrigger = trendDown and breakoutDown and belowEMA21
+
+// ===== Position sizing (risk %) =====
+riskValue  = strategy.equity * (riskPct/100.0)
+qtyByRisk  = (not na(slDistance) and slDistance > 0) ? riskValue / slDistance : na
+orderQty() =>
+    useRiskSize and not na(qtyByRisk) and qtyByRisk > 0 ? qtyByRisk : 1
+
+// ===== Entries =====
+canTakeTrade = strategy.position_size == 0 and not na(atr) and not na(ema21)
+
+if canTakeTrade
+    // Reset trailing stop before new trade
+    tradeStopLoss := na
+    
+    // LONG ENTRY
+    if longTrigger
+        strategy.entry("Long", strategy.long, qty=orderQty())
+        // Set initial stop loss
+        tradeStopLoss := close - slDistance
+        
+    // SHORT ENTRY  
+    if enableShorts and shortTrigger
+        strategy.entry("Short", strategy.short, qty=orderQty())
+        // Set initial stop loss
+        tradeStopLoss := close + slDistance
+
+// ===== Trailing Stop Logic =====
+if strategy.position_size > 0
+    // LONG POSITION - Update trailing stop
+    if useTrailingStop and barstate.isconfirmed
+        newLongSL = low - trailDistance
+        if newLongSL > tradeStopLoss
+            tradeStopLoss := newLongSL
+    
+    // Check exit conditions for LONG
+    if low <= tradeStopLoss and not na(tradeStopLoss)
+        stopLossTriggered := true
+        emaExitTriggered := false
+        takeProfitTriggered := false
+    else if useTakeProfit and high >= strategy.position_avg_price + atrMultTP*atr
+        takeProfitTriggered := true
+        stopLossTriggered := false
+        emaExitTriggered := false
+    
+    // LONG STOP LOSS & TAKE PROFIT
+    if useTrailingStop
+        if useTakeProfit
+            strategy.exit("L-Trail", from_entry="Long", stop=tradeStopLoss, limit=strategy.position_avg_price + atrMultTP*atr)
+        else
+            strategy.exit("L-Trail", from_entry="Long", stop=tradeStopLoss)
+    else
+        if useTakeProfit
+            strategy.exit("L-Stop", from_entry="Long", stop=strategy.position_avg_price - atrMultSL*atr, limit=strategy.position_avg_price + atrMultTP*atr)
+        else
+            strategy.exit("L-Stop", from_entry="Long", stop=strategy.position_avg_price - atrMultSL*atr)
+
+if strategy.position_size < 0
+    // SHORT POSITION - Update trailing stop  
+    if useTrailingStop and barstate.isconfirmed
+        newShortSL = high + trailDistance
+        if newShortSL < tradeStopLoss
+            tradeStopLoss := newShortSL
+    
+    // Check exit conditions for SHORT
+    if high >= tradeStopLoss and not na(tradeStopLoss)
+        stopLossTriggered := true
+        emaExitTriggered := false
+        takeProfitTriggered := false
+    else if useTakeProfit and low <= strategy.position_avg_price - atrMultTP*atr
+        takeProfitTriggered := true
+        stopLossTriggered := false
+        emaExitTriggered := false
+            
+    // SHORT STOP LOSS & TAKE PROFIT
+    if useTrailingStop
+        if useTakeProfit
+            strategy.exit("S-Trail", from_entry="Short", stop=tradeStopLoss, limit=strategy.position_avg_price - atrMultTP*atr)
+        else
+            strategy.exit("S-Trail", from_entry="Short", stop=tradeStopLoss)
+    else
+        if useTakeProfit
+            strategy.exit("S-Stop", from_entry="Short", stop=strategy.position_avg_price + atrMultSL*atr, limit=strategy.position_avg_price - atrMultTP*atr)
+        else
+            strategy.exit("S-Stop", from_entry="Short", stop=strategy.position_avg_price + atrMultSL*atr)
+
+// ===== EMA trailing exit =====
+exitLong  = strategy.position_size > 0 and close < ema21
+exitShort = strategy.position_size < 0 and close > ema21
+if exitLong
+    emaExitTriggered := true
+    stopLossTriggered := false
+    strategy.close("Long")
+if exitShort
+    emaExitTriggered := true
+    stopLossTriggered := false
+    strategy.close("Short")
+
+// Reset triggers when no position
+if strategy.position_size == 0
+    stopLossTriggered := false
+    emaExitTriggered := false
+    takeProfitTriggered := false
+
+// ===== Visuals =====
+plot(ema21, "EMA 21", color=color.new(color.teal, 0), linewidth=2)
+plot(ema50, "EMA 50", color=color.new(color.orange, 0), linewidth=2)
+
+// Range boundaries
+rangeHighLine = plot(rangeHigh, "Range High", color=validRange ? color.new(color.green, 30) : color.new(color.gray, 70), style=plot.style_line, linewidth=1)
+rangeLowLine = plot(rangeLow, "Range Low", color=validRange ? color.new(color.red, 30) : color.new(color.gray, 70), style=plot.style_line, linewidth=1)
+
+// Range fill
+fill(rangeHighLine, rangeLowLine, color=validRange ? color.new(color.blue, 95) : color.new(color.gray, 95), title="Range Fill")
+
+// Trailing stop
+plot(tradeStopLoss, "Trailing Stop", color=color.red, style=plot.style_linebr, linewidth=1)
+
+// Take profit levels (when enabled)
+takeProfitLevel = strategy.position_size > 0 ? strategy.position_avg_price + atrMultTP*atr : 
+                  strategy.position_size < 0 ? strategy.position_avg_price - atrMultTP*atr : na
+plot(useTakeProfit and strategy.position_size != 0 ? takeProfitLevel : na, 
+     "Take Profit", color=color.new(color.green, 30), style=plot.style_linebr, linewidth=2)
+
+// Entry signals
+plotshape(longTrigger,  title="Long Breakout",  style=shape.triangleup,   location=location.belowbar, size=size.small, color=color.new(color.lime, 0),   text="BO-L")
+plotshape(shortTrigger, title="Short Breakout", style=shape.triangledown, location=location.abovebar, size=size.small, color=color.new(color.red, 0), text="BO-S")
+
+// ===== Exit Type Indicators =====
+// RED X for Stop Loss exits
+plotshape(stopLossTriggered and strategy.position_size == 0, title="Stop Loss Hit", 
+          style=shape.xcross, location=location.abovebar, size=size.large, 
+          color=color.new(color.red, 0), text="X")
+
+// GREEN CIRCLE for Take Profit exits
+plotshape(takeProfitTriggered and strategy.position_size == 0, title="Take Profit Hit", 
+          style=shape.circle, location=location.abovebar, size=size.large, 
+          color=color.new(color.green, 0), text="TP")
+
+// BLUE DIAMOND for EMA exits
+plotshape(emaExitTriggered and strategy.position_size == 0, title="EMA Exit", 
+          style=shape.diamond, location=location.abovebar, size=size.normal, 
+          color=color.new(color.blue, 0), text="EMA")
+
+// Add position status labels for better tracking
+var label positionLabel = na
+if strategy.position_size != 0 and na(positionLabel)
+    positionLabel := label.new(bar_index, strategy.position_size > 0 ? high + atr : low - atr, 
+                               text=strategy.position_size > 0 ? "LONG OPEN" : "SHORT OPEN", 
+                               color=strategy.position_size > 0 ? color.new(color.green, 80) : color.new(color.red, 80),
+                               textcolor=color.white, size=size.small, style=label.style_label_down)
+
+if strategy.position_size == 0 and not na(positionLabel)
+    label.delete(positionLabel)
+    positionLabel := na
+
+// ===== Human-readable alerts (optional) =====
+alertcondition(longTrigger,  title="Long Breakout",  message="Long: Range breakout above EMA21")
+alertcondition(exitLong,     title="Long Exit",   message="Long exit: Close below 21 EMA")
+alertcondition(shortTrigger, title="Short Breakout", message="Short: Range breakdown below EMA21")
+alertcondition(exitShort,    title="Short Exit",  message="Short exit: Close above 21 EMA")
+
+// ===== Automated Webhook Alerts to Cloudflare =====
+tvToken = "k9P$Xz83!vW@b12N#rTe"   // must match WEBHOOK_SECRET in Worker
+acctKey = "FTMO"
+
+// Risk sent as USD-equivalent; EA converts to lots
+_rv     = strategy.equity * (riskPct/100.0)
+_slDist = atrMultSL * atr
+qtyUSD  = (not na(_slDist) and _slDist > 0) ? math.round(_rv / _slDist) : 0
+
+mkMsg(evt, side, slPrice) =>
+    // build JSON string safely over multiple lines
+    s = '{"token":"' + tvToken + '",'
+    s += '"account":"' + acctKey + '",'
+    s += '"event":"' + evt + '",'
+    s += '"symbol":"' + syminfo.ticker + '",'
+    s += '"side":"' + side + '",'
+    s += '"qty_usd":' + str.tostring(qtyUSD) + ','
+    s += '"sl":' + str.tostring(slPrice, "#.####") + ','
+    s += '"price":' + str.tostring(close, "#.####") + ','
+    s += '"atr":' + str.tostring(atr, "#.####") + ','
+    s += '"magic":123457,'  // Different magic number for breakout strategy
+    s += '"tag":"Range-Breakout",'
+    s += '"oid":"' + str.tostring(time) + '-' + evt + '-' + side + '",'
+    s += '"ts":' + str.tostring(time) + '}'
+    s
+
+// Triggers (one alert per bar close)
+newLong    = longTrigger  and strategy.position_size <= 0
+newShort   = shortTrigger and strategy.position_size >= 0
+closeLong  = exitLong
+closeShort = exitShort
+
+// Use current close for pre-entry SL reference
+// Ensure SL values are properly formatted with correct decimal places
+if newLong
+    slPrice = math.round((close - (atrMultSL*atr)) * 10000) / 10000  // SL below price for BUY
+    alert(mkMsg("entry","BUY", slPrice),  alert.freq_once_per_bar_close)
+if newShort
+    slPrice = math.round((close + (atrMultSL*atr)) * 10000) / 10000  // SL above price for SELL
+    alert(mkMsg("entry","SELL", slPrice),  alert.freq_once_per_bar_close)
+
+// Exits just flatten; SL not needed
+if closeLong
+    alert(mkMsg("exit","SELL", 0.0), alert.freq_once_per_bar_close)
+if closeShort
+    alert(mkMsg("exit","BUY", 0.0), alert.freq_once_per_bar_close)
