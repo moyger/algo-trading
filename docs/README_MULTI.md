@@ -1,45 +1,45 @@
-# 多币种网格交易机器人 - 完整运行说明
+# Multi-Currency Grid Trading Bot - Complete Operating Instructions
 
-## 概述
+## Overview
 
-本项目是币安永续合约网格交易机器人的多币种版本，支持同时运行多个币种的网格交易策略。所有网格策略逻辑与单币种版本完全一致，只是增加了多币种并行运行的支持。
+This project is a multi-currency version of the Binance perpetual contract grid trading bot, supporting simultaneous grid trading strategies for multiple currencies. All grid strategy logic is completely consistent with the single-currency version, with added support for multi-currency parallel operation.
 
-## 文件结构
+## File Structure
 
 ```
 grid/
-├── src/multi_bot/binance_multi_bot.py # BinanceGridBot 类实现
-├── src/single_bot/binance_bot.py      # 单币种入口文件
-├── src/multi_bot/multi_bot.py         # 多币种入口文件
-├── symbols.yaml            # 多币种配置文件
-├── symbols.json            # JSON格式配置文件
-├── scripts/deploy.sh       # 部署脚本
-├── docker/docker-compose.yml # Docker配置
-├── health_check.py         # 健康检查脚本
-├── scripts/start.sh         # 启动脚本
-├── .env                    # 环境变量配置
-└── log/                    # 日志目录
-    ├── multi_grid_BN.log   # 主日志
-    ├── status_summary.log  # 状态汇总日志
-    └── grid_BN_*.log       # 各币种日志
+├── src/multi_bot/binance_multi_bot.py # BinanceGridBot class implementation
+├── src/single_bot/binance_bot.py      # Single currency entry file
+├── src/multi_bot/multi_bot.py         # Multi-currency entry file
+├── symbols.yaml            # Multi-currency configuration file
+├── symbols.json            # JSON format configuration file
+├── scripts/deploy.sh       # Deployment script
+├── docker/docker-compose.yml # Docker configuration
+├── health_check.py         # Health check script
+├── scripts/start.sh        # Startup script
+├── .env                    # Environment variable configuration
+└── log/                    # Log directory
+    ├── multi_grid_BN.log   # Main log
+    ├── status_summary.log  # Status summary log
+    └── grid_BN_*.log       # Individual currency logs
 ```
 
-## 快速开始
+## Quick Start
 
-### 1. 环境准备
+### 1. Environment Setup
 
 ```bash
-# 安装依赖
+# Install dependencies
 pip install ccxt websockets python-dotenv pyyaml aiohttp
 
-# 配置环境变量
+# Configure environment variables
 cp .env.example .env
-# 编辑 .env 文件，设置 API 密钥等信息
+# Edit .env file to set API keys and other information
 ```
 
-### 2. 配置文件设置
+### 2. Configuration File Setup
 
-创建 `symbols.yaml` 文件：
+Create `symbols.yaml` file:
 
 ```yaml
 symbols:
@@ -56,58 +56,58 @@ symbols:
     contract_type: USDT
 ```
 
-### 3. 启动方式
+### 3. Startup Methods
 
-#### 方式一：直接运行
+#### Method 1: Direct Execution
 ```bash
-# 启动单币种模式
+# Start single currency mode
 python3 src/single_bot/binance_bot.py
 
-# 启动多币种模式
+# Start multi-currency mode
 python3 src/multi_bot/multi_bot.py
 
-# 或使用启动脚本
-./scripts/start.sh single    # 单币种
-./scripts/start.sh multi     # 多币种
+# Or use startup script
+./scripts/start.sh single    # Single currency
+./scripts/start.sh multi     # Multi-currency
 ```
 
-#### 方式二：Docker 运行
+#### Method 2: Docker Execution
 ```bash
-# 构建镜像
+# Build image
 ./scripts/deploy.sh build
 
-# 启动单币种模式
+# Start single currency mode
 ./scripts/deploy.sh start
 
-# 启动多币种模式
+# Start multi-currency mode
 ./scripts/deploy.sh multi-start
 ```
 
-## 详细配置说明
+## Detailed Configuration Instructions
 
-### 环境变量配置 (.env)
+### Environment Variable Configuration (.env)
 
 ```bash
-# 必填配置
+# Required configuration
 API_KEY=your_binance_api_key
 API_SECRET=your_binance_api_secret
 
-# 可选配置
+# Optional configuration
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_CHAT_ID=your_telegram_chat_id
 ENABLE_NOTIFICATIONS=true
 NOTIFICATION_INTERVAL=3600
 ```
 
-### 多币种配置 (symbols.yaml)
+### Multi-Currency Configuration (symbols.yaml)
 
 ```yaml
 symbols:
-  - name: BTCUSDT              # 交易对名称
-    grid_spacing: 0.004        # 网格间距 (0.001-0.01)
-    initial_quantity: 0.001    # 初始交易数量
-    leverage: 20               # 杠杆倍数 (1-100)
-    contract_type: USDT        # 合约类型 (USDT/USDC)
+  - name: BTCUSDT              # Trading pair name
+    grid_spacing: 0.004        # Grid spacing (0.001-0.01)
+    initial_quantity: 0.001    # Initial trading quantity
+    leverage: 20               # Leverage multiplier (1-100)
+    contract_type: USDT        # Contract type (USDT/USDC)
     
   - name: ETHUSDT
     grid_spacing: 0.005
@@ -116,235 +116,235 @@ symbols:
     contract_type: USDT
 ```
 
-### 配置参数说明
+### Configuration Parameter Description
 
-| 参数 | 说明 | 推荐范围 | 示例 |
-|------|------|----------|------|
-| `name` | 交易对名称 | 币安支持的永续合约 | BTCUSDT, ETHUSDT |
-| `grid_spacing` | 网格间距 | 0.001-0.01 | 0.004 (0.4%) |
-| `initial_quantity` | 初始数量 | 根据币种价格调整 | BTC: 0.001, ETH: 0.01 |
-| `leverage` | 杠杆倍数 | 1-100 | 20 |
-| `contract_type` | 合约类型 | USDT/USDC | USDT |
+| Parameter | Description | Recommended Range | Example |
+|-----------|-------------|-------------------|---------|
+| `name` | Trading pair name | Binance supported perpetual contracts | BTCUSDT, ETHUSDT |
+| `grid_spacing` | Grid spacing | 0.001-0.01 | 0.004 (0.4%) |
+| `initial_quantity` | Initial quantity | Adjust based on currency price | BTC: 0.001, ETH: 0.01 |
+| `leverage` | Leverage multiplier | 1-100 | 20 |
+| `contract_type` | Contract type | USDT/USDC | USDT |
 
-## 日志管理
+## Log Management
 
-### 日志文件说明
+### Log File Description
 
-- `log/multi_grid_BN.log`: 主控制日志
-- `log/status_summary.log`: 状态汇总日志
-- `log/grid_BN_BTCUSDT.log`: BTC 币种日志
-- `log/grid_BN_ETHUSDT.log`: ETH 币种日志
+- `log/multi_grid_BN.log`: Main control log
+- `log/status_summary.log`: Status summary log
+- `log/grid_BN_BTCUSDT.log`: BTC currency log
+- `log/grid_BN_ETHUSDT.log`: ETH currency log
 
-### 查看日志
+### View Logs
 
 ```bash
-# 查看主日志
+# View main log
 tail -f log/multi_grid_BN.log
 
-# 查看状态汇总
+# View status summary
 tail -f log/status_summary.log
 
-# 查看特定币种日志
+# View specific currency log
 tail -f log/grid_BN_BTCUSDT.log
 
-# 使用部署脚本查看
-./scripts/deploy.sh multi-logs    # 查看汇总日志
-./scripts/deploy.sh bot-logs      # 查看币种日志
+# Use deployment script to view
+./scripts/deploy.sh multi-logs    # View summary log
+./scripts/deploy.sh bot-logs      # View currency logs
 ```
 
-### 日志轮转
+### Log Rotation
 
-- 按日期自动分割：每天午夜创建新文件
-- 保留时间：最近7天的日志文件
-- 文件命名：`grid_BN_BTCUSDT.log.2024-01-15`
+- Automatic date-based splitting: New file created at midnight daily
+- Retention period: Last 7 days of log files
+- File naming: `grid_BN_BTCUSDT.log.2024-01-15`
 
-## 健康检查
+## Health Check
 
-### 手动检查
+### Manual Check
 ```bash
 python3 health_check.py
 ```
 
-### Docker 健康检查
+### Docker Health Check
 ```bash
-# 查看容器健康状态
+# View container health status
 docker inspect grid-trader --format='{{.State.Health.Status}}'
 
-# 查看健康检查日志
+# View health check logs
 docker inspect grid-trader --format='{{.State.Health.Log}}'
 ```
 
-### 健康检查项目
+### Health Check Items
 
-1. **状态汇总日志**: 检查是否正常更新
-2. **主日志文件**: 检查文件大小和错误
-3. **币种日志文件**: 检查各币种运行状态
-4. **进程状态**: 检查主进程是否存活
+1. **Status Summary Log**: Check for normal updates
+2. **Main Log File**: Check file size and errors
+3. **Currency Log Files**: Check operation status of each currency
+4. **Process Status**: Check if main process is alive
 
-## 部署脚本使用
+## Deployment Script Usage
 
-### 基本命令
+### Basic Commands
 
 ```bash
-./scripts/deploy.sh build          # 构建 Docker 镜像
-./scripts/deploy.sh start          # 启动单币种模式
-./scripts/deploy.sh multi-start    # 启动多币种模式
-./scripts/deploy.sh stop           # 停止服务
-./scripts/deploy.sh restart        # 重启服务
-./scripts/deploy.sh logs           # 查看容器日志
-./scripts/deploy.sh multi-logs     # 查看汇总日志
-./scripts/deploy.sh bot-logs       # 查看币种日志
-./scripts/deploy.sh status         # 查看状态
-./scripts/deploy.sh cleanup        # 清理资源
+./scripts/deploy.sh build          # Build Docker image
+./scripts/deploy.sh start          # Start single currency mode
+./scripts/deploy.sh multi-start    # Start multi-currency mode
+./scripts/deploy.sh stop           # Stop service
+./scripts/deploy.sh restart        # Restart service
+./scripts/deploy.sh logs           # View container logs
+./scripts/deploy.sh multi-logs     # View summary logs
+./scripts/deploy.sh bot-logs       # View currency logs
+./scripts/deploy.sh status         # View status
+./scripts/deploy.sh cleanup        # Clean up resources
 ```
 
-### Docker 管理
+### Docker Management
 
 ```bash
-# 查看容器状态
+# View container status
 docker-compose -f docker/docker-compose.yml ps
 
-# 查看资源使用
+# View resource usage
 docker stats grid-trader
 
-# 进入容器
+# Enter container
 docker exec -it grid-trader bash
 
-# 查看容器日志
+# View container logs
 docker-compose -f docker/docker-compose.yml logs -f
 ```
 
-## 故障排查
+## Troubleshooting
 
-### 常见问题
+### Common Issues
 
-1. **API 密钥错误**
+1. **API Key Error**
    ```bash
-   # 检查环境变量
+   # Check environment variables
    docker exec grid-trader env | grep API
    ```
 
-2. **配置文件错误**
+2. **Configuration File Error**
    ```bash
-   # 验证 YAML 格式
+   # Verify YAML format
    python3 -c "import yaml; yaml.safe_load(open('symbols.yaml'))"
    ```
 
-3. **网络连接问题**
+3. **Network Connection Issues**
    ```bash
-   # 检查网络连接
+   # Check network connection
    docker exec grid-trader ping -c 3 fstream.binance.com
    ```
 
-4. **日志文件权限**
+4. **Log File Permissions**
    ```bash
-   # 修复权限
+   # Fix permissions
    sudo chown -R $USER:$USER log/
    chmod 755 log/
    ```
 
-### 重启服务
+### Restart Service
 
 ```bash
-# 完全重启
+# Complete restart
 ./scripts/deploy.sh stop
 ./scripts/deploy.sh multi-start
 
-# 重新构建
+# Rebuild
 ./scripts/deploy.sh build
 ./scripts/deploy.sh multi-start
 ```
 
-## 性能监控
+## Performance Monitoring
 
-### 资源使用监控
+### Resource Usage Monitoring
 
 ```bash
-# 查看容器资源使用
+# View container resource usage
 docker stats grid-trader
 
-# 查看日志文件大小
+# View log file sizes
 du -sh log/*.log
 
-# 查看磁盘使用
+# View disk usage
 df -h
 ```
 
-### 状态监控
+### Status Monitoring
 
 ```bash
-# 查看活跃机器人
+# View active bots
 tail -1 log/status_summary.log
 
-# 查看错误日志
+# View error logs
 grep ERROR log/multi_grid_BN.log
 
-# 查看启动状态
-grep "启动成功" log/multi_grid_BN.log
+# View startup status
+grep "startup successful" log/multi_grid_BN.log
 ```
 
-## 安全注意事项
+## Security Considerations
 
-1. **API 密钥安全**
-   - 不要在代码中硬编码 API 密钥
-   - 使用环境变量或 .env 文件
-   - 定期更换 API 密钥
+1. **API Key Security**
+   - Do not hardcode API keys in code
+   - Use environment variables or .env files
+   - Regularly rotate API keys
 
-2. **权限控制**
-   - 限制 API 密钥权限（只读 + 交易）
-   - 设置 IP 白名单
-   - 启用双因素认证
+2. **Permission Control**
+   - Limit API key permissions (read-only + trading)
+   - Set IP whitelist
+   - Enable two-factor authentication
 
-3. **资金安全**
-   - 使用测试网络进行测试
-   - 从小额开始测试
-   - 设置合理的止损
+3. **Fund Security**
+   - Use testnet for testing
+   - Start testing with small amounts
+   - Set reasonable stop-loss
 
-## 版本兼容性
+## Version Compatibility
 
-### 向后兼容
+### Backward Compatibility
 
-- 单币种版本 `src/single_bot/binance_bot.py` 完全兼容
-- 原有的 `.env` 配置可以直接使用
-- 原有的日志格式保持不变
+- Single currency version `src/single_bot/binance_bot.py` is fully compatible
+- Existing `.env` configuration can be used directly
+- Original log format remains unchanged
 
-### 升级路径
+### Upgrade Path
 
-1. **从单币种升级到多币种**
+1. **Upgrade from Single to Multi-Currency**
    ```bash
-   # 备份原有配置
+   # Backup existing configuration
    cp .env .env.backup
    
-   # 创建多币种配置
+   # Create multi-currency configuration
    cp symbols.yaml.example symbols.yaml
-   # 编辑 symbols.yaml
+   # Edit symbols.yaml
    
-   # 启动多币种模式
+   # Start multi-currency mode
    ./scripts/deploy.sh multi-start
    ```
 
-2. **回退到单币种**
+2. **Rollback to Single Currency**
    ```bash
-   # 停止多币种服务
+   # Stop multi-currency service
    ./scripts/deploy.sh stop
    
-   # 启动单币种服务
+   # Start single currency service
    ./scripts/deploy.sh start
    ```
 
-## 测试建议
+## Testing Recommendations
 
-### 测试环境准备
+### Test Environment Setup
 
-1. **使用测试网络**
-   - 在币安测试网络进行测试
-   - 使用小额资金测试
+1. **Use Test Network**
+   - Test on Binance testnet
+   - Use small amounts for testing
 
-2. **测试币种选择**
-   - 建议测试 2-3 个币种
-   - 选择流动性好的币种
+2. **Test Currency Selection**
+   - Recommend testing 2-3 currencies
+   - Choose currencies with good liquidity
 
-3. **测试配置**
+3. **Test Configuration**
    ```yaml
    symbols:
      - name: BTCUSDT
@@ -357,66 +357,66 @@ grep "启动成功" log/multi_grid_BN.log
        leverage: 20
    ```
 
-### 测试验证步骤
+### Test Verification Steps
 
-1. **启动测试**
+1. **Start Test**
    ```bash
    ./scripts/deploy.sh multi-start
    ```
 
-2. **检查日志**
+2. **Check Logs**
    ```bash
-   # 检查主日志
+   # Check main log
    tail -f log/multi_grid_BN.log
    
-   # 检查状态汇总
+   # Check status summary
    tail -f log/status_summary.log
    
-   # 检查币种日志
+   # Check currency logs
    tail -f log/grid_BN_BTCUSDT.log
    tail -f log/grid_BN_ETHUSDT.log
    ```
 
-3. **验证功能**
-   - 确认两个币种都在运行
-   - 确认日志文件正常生成
-   - 确认 Telegram 通知正常
+3. **Verify Functions**
+   - Confirm both currencies are running
+   - Confirm log files are generated normally
+   - Confirm Telegram notifications work properly
 
-4. **健康检查**
+4. **Health Check**
    ```bash
    python3 health_check.py
    ```
 
-## 技术支持
+## Technical Support
 
-### 日志分析
+### Log Analysis
 
-如果遇到问题，请提供以下信息：
+If you encounter issues, please provide the following information:
 
-1. 主日志文件：`log/multi_grid_BN.log`
-2. 状态汇总日志：`log/status_summary.log`
-3. 相关币种日志：`log/grid_BN_[币种].log`
-4. 健康检查结果：`python3 health_check.py`
+1. Main log file: `log/multi_grid_BN.log`
+2. Status summary log: `log/status_summary.log`
+3. Related currency logs: `log/grid_BN_[currency].log`
+4. Health check results: `python3 health_check.py`
 
-### 常见错误
+### Common Errors
 
-1. **"API_KEY 和 API_SECRET 必须设置"**
-   - 检查 .env 文件是否存在
-   - 确认 API_KEY 和 API_SECRET 已设置
+1. **"API_KEY and API_SECRET must be set"**
+   - Check if .env file exists
+   - Confirm API_KEY and API_SECRET are set
 
-2. **"配置文件不存在"**
-   - 确认 symbols.yaml 或 symbols.json 文件存在
-   - 检查文件格式是否正确
+2. **"Configuration file does not exist"**
+   - Confirm symbols.yaml or symbols.json file exists
+   - Check if file format is correct
 
-3. **"双向持仓模式失败"**
-   - 在币安手动启用双向持仓模式
-   - 确认 API 密钥有足够权限
+3. **"Hedge position mode failed"**
+   - Manually enable hedge position mode on Binance
+   - Confirm API key has sufficient permissions
 
-4. **"WebSocket 连接失败"**
-   - 检查网络连接
-   - 确认防火墙设置
-   - 检查 API 密钥权限
+4. **"WebSocket connection failed"**
+   - Check network connection
+   - Confirm firewall settings
+   - Check API key permissions
 
 ---
 
-**注意**: 本软件仅供学习和研究使用，请在使用前充分了解风险，并确保遵守相关法律法规。 
+**Note**: This software is for learning and research purposes only. Please fully understand the risks before use and ensure compliance with relevant laws and regulations.
