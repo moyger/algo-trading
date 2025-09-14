@@ -1,164 +1,164 @@
-# Telegram 通知设置指南
+# Telegram Notification Setup Guide
 
-## 📱 创建 Telegram Bot
+## 📱 Create Telegram Bot
 
-### 1. 创建 Bot
-1. 在 Telegram 中搜索 `@BotFather`
-2. 发送 `/newbot` 命令
-3. 按提示设置 Bot 名称和用户名
-4. 保存获得的 `Bot Token`（格式如：`123456789:ABCdefGHIjklMNOpqrsTUVwxyz`）
+### 1. Create Bot
+1. Search for `@BotFather` in Telegram
+2. Send `/newbot` command
+3. Follow prompts to set Bot name and username
+4. Save the obtained `Bot Token` (format: `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
 
-### 2. 获取 Chat ID
+### 2. Get Chat ID
 
-#### 方法一：使用 Bot 获取
-1. 搜索并开始与你创建的 Bot 对话
-2. 发送任意消息给 Bot
-3. 在浏览器中访问：`https://api.telegram.org/bot<BOT_TOKEN>/getUpdates`
-   - 将 `<BOT_TOKEN>` 替换为你的实际 Token
-4. 在返回的 JSON 中找到 `"chat":{"id":123456789}` 部分的 `id` 值
+#### Method 1: Using Bot
+1. Search and start conversation with your created Bot
+2. Send any message to the Bot
+3. Visit in browser: `https://api.telegram.org/bot<BOT_TOKEN>/getUpdates`
+   - Replace `<BOT_TOKEN>` with your actual Token
+4. Find the `id` value in the `"chat":{"id":123456789}` part of the returned JSON
 
-#### 方法二：使用 @userinfobot
-1. 搜索 `@userinfobot` 并发送 `/start`
-2. 它会返回你的用户信息，包括 `Id` 字段
+#### Method 2: Using @userinfobot
+1. Search for `@userinfobot` and send `/start`
+2. It will return your user information including the `Id` field
 
-## 🔧 配置环境变量
+## 🔧 Configure Environment Variables
 
-在 `.env` 文件中添加以下配置：
+Add the following configuration in `.env` file:
 
 ```bash
-# Telegram 通知配置
+# Telegram notification configuration
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
 TELEGRAM_CHAT_ID=123456789
 ENABLE_NOTIFICATIONS=true
 NOTIFICATION_INTERVAL=3600
 ```
 
-### 配置说明
-- `TELEGRAM_BOT_TOKEN`: 从 BotFather 获得的 Bot Token
-- `TELEGRAM_CHAT_ID`: 你的 Telegram 用户 ID
-- `ENABLE_NOTIFICATIONS`: 是否启用通知（true/false）
-- `NOTIFICATION_INTERVAL`: 定时汇总通知间隔（秒，默认3600=1小时）
+### Configuration Description
+- `TELEGRAM_BOT_TOKEN`: Bot Token obtained from BotFather
+- `TELEGRAM_CHAT_ID`: Your Telegram user ID
+- `ENABLE_NOTIFICATIONS`: Whether to enable notifications (true/false)
+- `NOTIFICATION_INTERVAL`: Scheduled summary notification interval (seconds, default 3600=1 hour)
 
-## 📋 通知类型
+## 📋 Notification Types
 
-### 🚨 紧急通知 (有声音提醒)
-- **持仓超过风险阈值**
-- **价差偏移警告**
-- **配置错误**
-- **WebSocket连接失败**
-- **运行时异常**
+### 🚨 Urgent Notifications (with sound alerts)
+- **Position exceeds risk threshold**
+- **Price spread deviation warning**
+- **Configuration error**
+- **WebSocket connection failure**
+- **Runtime exception**
 
-### 🔔 重要通知 (有声音提醒)
-- **机器人启动成功**
-- **库存风险控制（双向减仓）**
-- **网格价格重新对齐**
+### 🔔 Important Notifications (with sound alerts)
+- **Bot startup successful**
+- **Inventory risk control (bidirectional position reduction)**
+- **Grid price realignment**
 
-### 🔇 静音通知 (无声音提醒)
-- **定时汇总通知**（每1-4小时）
-  - 当前持仓情况
-  - 未成交挂单统计
-  - 账户余额变化
-  - 价格信息
-  - 运行状态
-- **机器人停止通知**
+### 🔇 Silent Notifications (no sound alerts)
+- **Scheduled summary notifications** (every 1-4 hours)
+  - Current position status
+  - Pending order statistics
+  - Account balance changes
+  - Price information
+  - Running status
+- **Bot stop notification**
 
-## 🎯 通知示例
+## 🎯 Notification Examples
 
-### 启动通知
+### Startup Notification
 ```
-🤖 X网格机器人 | 2024-01-15 10:30:00
+🤖 X Grid Bot | 2024-01-15 10:30:00
 
-🚀 机器人启动成功
+🚀 Bot startup successful
 
-📊 交易配置
-• 币种: X
-• 网格间距: 0.40%
-• 初始数量: 1 张
-• 杠杆倍数: 20x
+📊 Trading configuration
+• Symbol: X
+• Grid spacing: 0.40%
+• Initial quantity: 1 contract
+• Leverage: 20x
 
-🛡️ 风险控制
-• 锁仓阈值: 30.00
-• 持仓监控阈值: 15.00
-• 价差阈值: 0.0400%
+🛡️ Risk control
+• Lock position threshold: 30.00
+• Position monitoring threshold: 15.00
+• Price spread threshold: 0.0400%
 
-✅ 机器人已开始运行，将自动进行网格交易...
-```
-
-### 风险警告
-```
-🚨 紧急通知 🚨
-
-🤖 X网格机器人 | 2024-01-15 14:30:00
-
-⚠️ 持仓风险警告
-
-📍 LONG持仓超过极限阈值
-• 当前long持仓: 35 张
-• 极限阈值: 30.00
-• 最新价格: 0.62850000
-
-🛑 已暂停新开仓，等待持仓回落
+✅ Bot has started running, will automatically perform grid trading...
 ```
 
-### 静音汇总通知
+### Risk Warning
 ```
-🔇 定时汇总 🔇
+🚨 Urgent Notification 🚨
 
-🤖 X网格机器人 | 2024-01-15 15:30:00
+🤖 X Grid Bot | 2024-01-15 14:30:00
 
-📊 运行状态汇总
+⚠️ Position risk warning
 
-💰 账户信息
-• USDT余额: 1250.35 (变化: +15.20)
+📍 LONG position exceeds maximum threshold
+• Current long position: 35 contracts
+• Maximum threshold: 30.00
+• Latest price: 0.62850000
 
-📈 持仓情况
-• 多头持仓: 12 张
-• 空头持仓: 8 张
-
-📋 挂单状态
-• 多头开仓: 1 张
-• 多头止盈: 1 张
-• 空头开仓: 1 张
-• 空头止盈: 1 张
-
-💹 价格信息
-• 最新价格: 0.62850000
-• 最佳买价: 0.62840000
-• 最佳卖价: 0.62860000
-
-🏃‍♂️ 机器人运行正常...
+🛑 New opening suspended, waiting for position to fall back
 ```
-*注：此类消息不会产生声音提醒*
 
-## 📊 通知方式总览
+### Silent Summary Notification
+```
+🔇 Scheduled Summary 🔇
 
-| 通知类型 | 发送方式 | 声音提醒 | 频率/触发条件 | 紧急程度 |
-|---------|---------|----------|---------------|----------|
-| 🚀 启动通知 | 事件触发 | ✅ 有声音 | 启动时一次 | 🟢 信息 |
-| ⚠️ 持仓风险警告 | 事件触发 | ✅ 有声音 | 超过阈值时 | 🔴 紧急 |
-| 📈 价差偏移警告 | 事件触发 | ✅ 有声音 | 每30秒检查 | 🔴 紧急 |
-| 📉 风险减仓通知 | 事件触发 | ✅ 有声音 | 双向超阈值 | 🟡 重要 |
-| ❌ 错误/异常通知 | 事件触发 | ✅ 有声音 | 发生异常时 | 🔴 紧急 |
-| 📊 定时汇总 | 定时发送 | 🔇 静音 | 每1-4小时 | 🔵 常规 |
-| 🛑 停止通知 | 事件触发 | 🔇 静音 | 手动停止时 | 🟢 信息 |
+🤖 X Grid Bot | 2024-01-15 15:30:00
 
-### 🔧 技术实现
-- **有声音**: `disable_notification=false` (默认)
-- **静音**: `disable_notification=true`
-- **紧急标记**: 添加 🚨 图标和特殊格式
-- **静音标记**: 添加 🔇 图标
+📊 Running status summary
 
-## 🛠️ 测试配置
+💰 Account information
+• USDT balance: 1250.35 (change: +15.20)
 
-启动机器人后，如果配置正确，你应该会收到启动通知。如果没有收到：
+📈 Position status
+• Long position: 12 contracts
+• Short position: 8 contracts
 
-1. 检查 Bot Token 和 Chat ID 是否正确
-2. 确认已经给 Bot 发送过消息
-3. 查看日志中是否有发送失败的错误信息
+📋 Order status
+• Long opening: 1 contract
+• Long take-profit: 1 contract
+• Short opening: 1 contract
+• Short take-profit: 1 contract
 
-## 🔐 安全提示
+💹 Price information
+• Latest price: 0.62850000
+• Best bid: 0.62840000
+• Best ask: 0.62860000
 
-- **不要**在公共场所分享你的 Bot Token
-- **不要**将 Bot Token 提交到代码仓库
-- 定期检查 Bot 的消息历史
-- 如果发现异常，及时更换 Bot Token 
+🏃‍♂️ Bot running normally...
+```
+*Note: This type of message will not produce sound alerts*
+
+## 📊 Notification Overview
+
+| Notification Type | Send Method | Sound Alert | Frequency/Trigger | Priority |
+|------------------|-------------|-------------|-------------------|----------|
+| 🚀 Startup notification | Event triggered | ✅ With sound | Once at startup | 🟢 Info |
+| ⚠️ Position risk warning | Event triggered | ✅ With sound | When threshold exceeded | 🔴 Urgent |
+| 📈 Price spread warning | Event triggered | ✅ With sound | Every 30 seconds check | 🔴 Urgent |
+| 📉 Risk reduction notification | Event triggered | ✅ With sound | Both directions exceed threshold | 🟡 Important |
+| ❌ Error/Exception notification | Event triggered | ✅ With sound | When exception occurs | 🔴 Urgent |
+| 📊 Scheduled summary | Timed send | 🔇 Silent | Every 1-4 hours | 🔵 Regular |
+| 🛑 Stop notification | Event triggered | 🔇 Silent | Manual stop | 🟢 Info |
+
+### 🔧 Technical Implementation
+- **With sound**: `disable_notification=false` (default)
+- **Silent**: `disable_notification=true`
+- **Urgent flag**: Add 🚨 icon and special formatting
+- **Silent flag**: Add 🔇 icon
+
+## 🛠️ Test Configuration
+
+After starting the bot, if configured correctly, you should receive a startup notification. If you don't receive it:
+
+1. Check if Bot Token and Chat ID are correct
+2. Confirm you have sent a message to the Bot
+3. Check logs for sending failure error messages
+
+## 🔐 Security Tips
+
+- **Do not** share your Bot Token in public places
+- **Do not** commit Bot Token to code repository
+- Regularly check Bot's message history
+- If you find anomalies, promptly replace Bot Token 

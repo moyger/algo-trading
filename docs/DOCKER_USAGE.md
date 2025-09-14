@@ -1,186 +1,512 @@
-# Docker 使用说明
+# Docker Usage Guide
 
-## 快速开始
+## Quick Start
 
-### 1. 配置环境变量
+### 1. Configure Environment Variables
 
-复制并编辑环境配置文件：
+Copy and edit the environment configuration file:
 
 ```bash
 cp env.example .env
 ```
 
-编辑 `.env` 文件，设置必要的配置：
+Edit the `.env` file to set necessary configurations:
 
 ```bash
-# 交易所配置
-EXCHANGE=gate  # 或 binance
-CONTRACT_TYPE=USDT  # 合约类型 (仅币安需要)
+# Exchange configuration
+EXCHANGE=gate  # or binance
+CONTRACT_TYPE=USDT  # Contract type (only required for Binance)
 
-# API 配置
+# API configuration
 API_KEY=your_api_key_here
 API_SECRET=your_api_secret_here
 
-# 交易配置
+# Trading configuration
 COIN_NAME=X
 GRID_SPACING=0.004
 INITIAL_QUANTITY=1
 LEVERAGE=20
 
-# Telegram 通知配置 (可选)
+# Telegram notification configuration (optional)
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 TELEGRAM_CHAT_ID=your_telegram_chat_id_here
 ENABLE_NOTIFICATIONS=true
 NOTIFICATION_INTERVAL=3600
 ```
 
-### 2. 构建和运行
+### 2. Build and Run
 
-#### 使用 Docker Compose (推荐)
+#### Using Docker Compose (Recommended)
 
 ```bash
-# 构建镜像
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose -f docker/docker-compose.yml.yml build
+# Build image
+docker-compose -f docker/docker-compose.yml build
 
-# 运行容器
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose -f docker/docker-compose.yml.yml up -d
+# Run container
+docker-compose -f docker/docker-compose.yml up -d
 
-# 查看日志
+# View logs
 docker-compose -f docker/docker-compose.yml logs -f
+```
 
-# 停止容器
+#### Using Deploy Script (Simplified)
+
+```bash
+# Build and start
+./scripts/deploy.sh build
+./scripts/deploy.sh start
+
+# Or directly start multi-currency mode
+./scripts/deploy.sh multi-start
+
+# View logs
+./scripts/deploy.sh logs
+```
+
+## Container Management
+
+### Basic Operations
+
+```bash
+# Start container
+docker-compose -f docker/docker-compose.yml up -d
+
+# Stop container
 docker-compose -f docker/docker-compose.yml down
+
+# Restart container
+docker-compose -f docker/docker-compose.yml restart
+
+# View container status
+docker-compose -f docker/docker-compose.yml ps
 ```
 
-#### 使用 Docker 命令
+### Log Management
 
 ```bash
-# 构建镜像
-docker build -t grid-trading-bot .
-
-# 运行容器
-docker run -d \
-  --name grid-trader \
-  --env-file .env \
-  -v $(pwd)/log:/app/log \
-  grid-trading-bot
-
-# 查看日志
-docker logs -f grid-trader
-
-# 停止容器
-docker stop grid-trader
-```
-
-## 配置说明
-
-### 交易所选择
-
-- `EXCHANGE=gate`: 运行 Gate.io 版本
-- `EXCHANGE=binance`: 运行币安版本
-
-### 合约类型 (仅币安)
-
-- `CONTRACT_TYPE=USDT`: USDT 合约
-- `CONTRACT_TYPE=USDC`: USDC 合约
-
-### 环境变量
-
-| 变量名 | 说明 | 默认值 | 必需 |
-|--------|------|--------|------|
-| EXCHANGE | 交易所选择 | gate | 是 |
-| CONTRACT_TYPE | 合约类型 | USDT | 否 |
-| API_KEY | API密钥 | - | 是 |
-| API_SECRET | API密钥 | - | 是 |
-| COIN_NAME | 交易币种 | X | 是 |
-| GRID_SPACING | 网格间距 | 0.004 | 是 |
-| INITIAL_QUANTITY | 初始数量 | 1 | 是 |
-| LEVERAGE | 杠杆倍数 | 20 | 是 |
-| TELEGRAM_BOT_TOKEN | Telegram机器人Token | - | 否 |
-| TELEGRAM_CHAT_ID | Telegram聊天ID | - | 否 |
-| ENABLE_NOTIFICATIONS | 启用通知 | true | 否 |
-| NOTIFICATION_INTERVAL | 通知间隔(秒) | 3600 | 否 |
-
-## 日志管理
-
-日志文件会保存在 `./log` 目录中，Docker 容器会自动挂载这个目录。
-
-### 查看实时日志
-
-```bash
-# 使用 docker-compose -f docker/docker-compose.yml
+# Real-time logs
 docker-compose -f docker/docker-compose.yml logs -f
 
-# 使用 docker
-docker logs -f grid-trader
+# View specific service logs
+docker-compose -f docker/docker-compose.yml logs -f grid-trader
+
+# View last 100 lines
+docker-compose -f docker/docker-compose.yml logs --tail=100
+
+# View logs for specific time range
+docker-compose -f docker/docker-compose.yml logs --since="2024-01-15T10:00:00"
 ```
 
-### 查看历史日志
+### Container Shell Access
 
 ```bash
-# 查看容器日志
-docker logs grid-trader
+# Enter running container
+docker exec -it grid-trader bash
 
-# 查看文件日志
-tail -f log/grid_Gate.log
-tail -f log/grid_BN.log
+# Run one-time command
+docker exec grid-trader python3 health_check.py
+
+# Check Python environment
+docker exec grid-trader python3 --version
 ```
 
-## 故障排除
+## Docker Configuration
 
-### 1. 权限问题
-
-如果遇到权限问题，可以修改用户ID：
-
-```bash
-# 在 docker-compose -f docker/docker-compose.yml.yml 中修改
-USER_ID: 1000
-GROUP_ID: 1000
-```
-
-### 2. 时区问题
-
-容器内使用 UTC 时区，如果需要本地时区，可以修改 `start.sh` 中的时区设置。
-
-### 3. 网络问题
-
-确保容器能够访问交易所API：
-
-```bash
-# 测试网络连接
-docker exec grid-trader ping api.gateio.ws
-docker exec grid-trader ping fapi.binance.com
-```
-
-### 4. 配置验证
-
-启动前会自动验证配置，如果配置错误会显示详细错误信息。
-
-## 安全建议
-
-1. **不要将 `.env` 文件提交到版本控制系统**
-2. **定期更新 API 密钥**
-3. **使用强密码和双因素认证**
-4. **限制 API 权限，只授予必要权限**
-5. **监控容器资源使用情况**
-
-## 性能优化
-
-### 资源限制
-
-在 `docker-compose -f docker/docker-compose.yml.yml` 中可以调整资源限制：
+### docker-compose.yml Structure
 
 ```yaml
+version: '3.8'
+
+services:
+  grid-trader:
+    build: 
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: grid-trader
+    restart: unless-stopped
+    
+    environment:
+      - PYTHONUNBUFFERED=1
+    
+    env_file:
+      - ../.env
+    
+    volumes:
+      - ../log:/app/log
+      - ../symbols.yaml:/app/symbols.yaml:ro
+    
+    ports:
+      - "8000:8000"  # Health check port
+    
+    healthcheck:
+      test: ["CMD", "python3", "health_check.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+```
+
+### Dockerfile Explanation
+
+```dockerfile
+# Use Python 3.9 slim image
+FROM python:3.9-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source code
+COPY src/ ./src/
+COPY scripts/ ./scripts/
+
+# Create non-root user for security
+RUN groupadd -r trader && useradd -r -g trader trader
+RUN chown -R trader:trader /app
+
+# Create log directory
+RUN mkdir -p log && chown trader:trader log
+
+# Switch to non-root user
+USER trader
+
+# Expose health check port
+EXPOSE 8000
+
+# Default command
+CMD ["python3", "src/multi_bot/multi_bot.py"]
+```
+
+## Volume Management
+
+### Persistent Data
+
+```bash
+# Create named volumes for data persistence
+docker volume create grid-trader-logs
+docker volume create grid-trader-data
+
+# Use volumes in docker-compose.yml
+volumes:
+  - grid-trader-logs:/app/log
+  - grid-trader-data:/app/data
+```
+
+### Bind Mounts
+
+```bash
+# Mount local directories
+volumes:
+  - ./log:/app/log                    # Log files
+  - ./symbols.yaml:/app/symbols.yaml:ro  # Configuration (read-only)
+  - ./data:/app/data                  # State data
+```
+
+## Environment-Specific Configuration
+
+### Development Environment
+
+```yaml
+# docker-compose.dev.yml
+version: '3.8'
+
+services:
+  grid-trader:
+    build: 
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    
+    environment:
+      - LOG_LEVEL=DEBUG
+      - TRADING_MODE=testnet
+    
+    volumes:
+      - ../src:/app/src:ro  # Mount source code for development
+    
+    ports:
+      - "8000:8000"  # Health check
+      - "5678:5678"  # Debug port
+```
+
+### Production Environment
+
+```yaml
+# docker-compose.prod.yml
+version: '3.8'
+
+services:
+  grid-trader:
+    image: grid-trader:latest
+    
+    environment:
+      - LOG_LEVEL=INFO
+      - TRADING_MODE=production
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+```
+
+## Health Monitoring
+
+### Health Check Configuration
+
+```yaml
+healthcheck:
+  test: ["CMD", "python3", "health_check.py"]
+  interval: 30s      # Check every 30 seconds
+  timeout: 10s       # Timeout after 10 seconds
+  retries: 3         # Retry 3 times
+  start_period: 60s  # Wait 60s before first check
+```
+
+### Health Check Commands
+
+```bash
+# Check container health status
+docker inspect grid-trader --format='{{.State.Health.Status}}'
+
+# View health check logs
+docker inspect grid-trader --format='{{json .State.Health}}'
+
+# Manual health check
+docker exec grid-trader python3 health_check.py
+```
+
+## Performance Monitoring
+
+### Resource Monitoring
+
+```bash
+# Monitor real-time resource usage
+docker stats grid-trader
+
+# Monitor all containers
+docker stats
+
+# View resource limits
+docker inspect grid-trader | grep -A 10 "Resources"
+```
+
+### Performance Tuning
+
+```yaml
+# Optimize for production
 deploy:
   resources:
     limits:
-      memory: 512M
-      cpus: '0.5'
+      memory: 1G        # Adjust based on currency count
+      cpus: '1.0'       # Adjust based on workload
     reservations:
-      memory: 256M
-      cpus: '0.25'
+      memory: 512M      # Minimum guaranteed memory
+      cpus: '0.5'       # Minimum guaranteed CPU
 ```
 
-### 日志轮转
+## Troubleshooting
 
-Docker 会自动管理日志文件大小，避免磁盘空间不足。 
+### Common Issues
+
+**Issue 1: Container won't start**
+```bash
+# Check container logs
+docker-compose -f docker/docker-compose.yml logs grid-trader
+
+# Check if ports are already in use
+netstat -tulpn | grep 8000
+
+# Rebuild image
+docker-compose -f docker/docker-compose.yml build --no-cache
+```
+
+**Issue 2: Permission errors**
+```bash
+# Check log directory permissions
+ls -la log/
+
+# Fix permissions
+sudo chown -R $USER:$USER log/
+chmod 755 log/
+```
+
+**Issue 3: Configuration not loaded**
+```bash
+# Verify environment file
+docker exec grid-trader env | grep API_KEY
+
+# Check mounted volumes
+docker inspect grid-trader | grep -A 20 "Mounts"
+```
+
+**Issue 4: Health check failing**
+```bash
+# Run health check manually
+docker exec grid-trader python3 health_check.py
+
+# Check Python environment
+docker exec grid-trader python3 -c "import sys; print(sys.path)"
+```
+
+### Debug Mode
+
+```bash
+# Run container with debug output
+docker-compose -f docker/docker-compose.yml up --no-daemon
+
+# Access container shell
+docker exec -it grid-trader bash
+
+# Run with debug logging
+docker exec grid-trader python3 src/multi_bot/multi_bot.py --debug
+```
+
+## Multi-Container Setup
+
+### Load Balancer Configuration
+
+```yaml
+version: '3.8'
+
+services:
+  grid-trader-1:
+    build: .
+    environment:
+      - INSTANCE_ID=1
+      - SYMBOLS=BTCUSDT,ETHUSDT
+  
+  grid-trader-2:
+    build: .
+    environment:
+      - INSTANCE_ID=2
+      - SYMBOLS=ADAUSDT,SOLUSDT
+  
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - grid-trader-1
+      - grid-trader-2
+```
+
+### Database Integration
+
+```yaml
+services:
+  grid-trader:
+    depends_on:
+      - redis
+      - postgres
+  
+  redis:
+    image: redis:alpine
+    volumes:
+      - redis-data:/data
+  
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_DB: grid_trading
+      POSTGRES_USER: trader
+      POSTGRES_PASSWORD: secure_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  redis-data:
+  postgres-data:
+```
+
+## Security Best Practices
+
+### Container Security
+
+```yaml
+# Run as non-root user
+user: "1000:1000"
+
+# Read-only root filesystem
+read_only: true
+
+# No new privileges
+security_opt:
+  - no-new-privileges:true
+
+# Limited capabilities
+cap_drop:
+  - ALL
+cap_add:
+  - NET_BIND_SERVICE
+```
+
+### Secrets Management
+
+```yaml
+# Use Docker secrets
+secrets:
+  api_key:
+    file: ./secrets/api_key.txt
+  api_secret:
+    file: ./secrets/api_secret.txt
+
+services:
+  grid-trader:
+    secrets:
+      - api_key
+      - api_secret
+```
+
+## Backup and Recovery
+
+### Data Backup
+
+```bash
+# Backup volumes
+docker run --rm -v grid-trader-logs:/data -v $(pwd):/backup alpine tar czf /backup/logs-backup-$(date +%Y%m%d).tar.gz /data
+
+# Backup container configuration
+docker inspect grid-trader > grid-trader-config-$(date +%Y%m%d).json
+```
+
+### Disaster Recovery
+
+```bash
+# Save container as image
+docker commit grid-trader grid-trader-backup:$(date +%Y%m%d)
+
+# Export container
+docker save grid-trader-backup:$(date +%Y%m%d) | gzip > grid-trader-backup.tar.gz
+
+# Restore from backup
+docker load < grid-trader-backup.tar.gz
+```
+
+---
+
+**Note**: This Docker setup provides a production-ready containerized environment for the grid trading system with proper security, monitoring, and maintenance capabilities.
