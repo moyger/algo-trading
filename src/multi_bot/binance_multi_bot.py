@@ -11,6 +11,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import os
 from dotenv import load_dotenv
 import aiohttp
+from dynamic_grid import DynamicGridCalculator
 
 # 加载环境变量
 load_dotenv()
@@ -388,6 +389,47 @@ class BinanceGridBot:
             'long': {'active': False, 'tp_price': None, 'lockdown_price': None, 'r': None, 'exited_at': None},
             'short': {'active': False, 'tp_price': None, 'lockdown_price': None, 'r': None, 'exited_at': None}
         }
+        
+        # 初始化动态网格计算器 (with regime filters and anchor system)
+        dynamic_config = {
+            'atr_period': config.get('atr_period', 14),
+            'bollinger_period': config.get('bollinger_period', 20),
+            'bollinger_std': config.get('bollinger_std', 2.0),
+            'min_grid_levels': config.get('min_grid_levels', 10),
+            'max_grid_levels': config.get('max_grid_levels', 30),
+            'volatility_multiplier': config.get('volatility_multiplier', 1.5),
+            # Regime filter configuration
+            'regime_filter_enabled': config.get('regime_filter_enabled', True),
+            'ema_fast_period': config.get('ema_fast_period', 12),
+            'ema_slow_period': config.get('ema_slow_period', 26),
+            'rsi_period': config.get('rsi_period', 14),
+            'adx_period': config.get('adx_period', 14),
+            'volume_period': config.get('volume_period', 20),
+            'regime_update_interval': config.get('regime_update_interval', 300),
+            # DGT Anchor system configuration
+            'anchor_enabled': config.get('anchor_enabled', True),
+            'anchor_lookback_hours': config.get('anchor_lookback_hours', 24),
+            'anchor_performance_threshold': config.get('anchor_performance_threshold', 0.02),
+            'anchor_reset_cooldown': config.get('anchor_reset_cooldown', 3600),
+            'anchor_volatility_threshold': config.get('anchor_volatility_threshold', 0.05)
+        }
+        
+        self.dynamic_grid = DynamicGridCalculator(
+            symbol=symbol,
+            base_grid_spacing=self.grid_spacing,
+            config=dynamic_config
+        )
+        
+        # 动态网格相关状态
+        self.dynamic_grid_enabled = config.get('dynamic_grid_enabled', True)
+        self.last_grid_adjustment_time = 0
+        self.grid_adjustment_interval = config.get('grid_adjustment_interval', 3600)  # 1 hour
+        self.price_data_buffer = []
+        self.last_kline_update_time = 0
+        
+        # DGT Anchor system state
+        self.anchor_enabled = config.get('anchor_enabled', True)
+        self.last_anchor_notification_time = 0
 
     def _init_exchange(self):
         """初始化交易所 API"""
@@ -806,11 +848,62 @@ class BinanceGridBot:
 • 最新价格: {self.latest_price:.8f}
 • 最佳买价: {self.best_bid_price:.8f}
 • 最佳卖价: {self.best_ask_price:.8f}
+{await self._get_performance_metrics()}
 
 🏃‍♂️ 机器人运行正常...
 """
         await self._send_telegram_message(message, urgent=False, silent=True)
         self.last_summary_time = current_time
+    
+    async def _get_performance_metrics(self):
+        """Get performance metrics for dynamic grid and anchor system"""
+        try:
+            metrics_sections = []
+            
+            # Dynamic Grid Metrics
+            if self.dynamic_grid_enabled:
+                volatility_metrics = self._get_enhanced_volatility_metrics()
+                grid_condition = self.dynamic_grid.get_market_condition()
+                
+                grid_section = f"""
+⚡ **动态网格状态**
+• 当前网格间距: {self.grid_spacing:.6f}
+• 市场状态: {grid_condition}
+• 波动率倍数: {volatility_metrics.get('volatility_multiplier', 1.0):.2f}x"""
+                
+                # Add regime information if available
+                if hasattr(self.dynamic_grid, 'regime_enabled') and self.dynamic_grid.regime_enabled:
+                    regime_analysis = self.dynamic_grid.get_regime_analysis()
+                    if regime_analysis.get('enabled', False):
+                        regime_section = f"""
+📊 **市场机制分析**
+• 当前机制: {regime_analysis.get('regime', 'unknown').replace('_', ' ').title()}
+• 置信度: {regime_analysis.get('confidence', 0):.1%}
+• 仓位偏向: {regime_analysis.get('position_bias', 'neutral').title()}"""
+                        grid_section += regime_section
+                
+                # Add anchor metrics if available
+                if self.anchor_enabled:
+                    try:
+                        anchor_metrics = self.dynamic_grid.get_anchor_metrics()
+                        anchor_section = f"""
+⚓ **DGT锚点系统**
+• 当前锚点: {anchor_metrics.get('current_anchor', self.latest_price):.4f}
+• 锚点类型: {anchor_metrics.get('anchor_type', 'optimal').replace('_', ' ').title()}
+• 总交易数: {anchor_metrics.get('total_trades', 0)}
+• 盈利率: {anchor_metrics.get('win_rate', 0):.1%}
+• 性能评分: {anchor_metrics.get('performance_score', 0):.3f}"""
+                        grid_section += anchor_section
+                    except Exception as e:
+                        logger.warning(f"Failed to get anchor metrics: {e}")
+                
+                metrics_sections.append(grid_section)
+            
+            return "".join(metrics_sections) if metrics_sections else ""
+            
+        except Exception as e:
+            logger.warning(f"Failed to get performance metrics: {e}")
+            return ""
 
     async def _send_error_notification(self, error_msg, error_type="运行错误"):
         """发送错误通知"""
@@ -983,6 +1076,9 @@ class BinanceGridBot:
                             elif position_side == "SHORT":
                                 self.sell_short_orders += remaining
                     elif status == "FILLED":
+                        # Record trade result for anchor system (DGT methodology)
+                        await self._record_trade_result(order, side, position_side, filled, reduce_only)
+                        
                         if side == "BUY":
                             if position_side == "LONG":
                                 self.long_position += filled
@@ -1328,17 +1424,20 @@ class BinanceGridBot:
 
     def _update_mid_price(self, side, price):
         """更新中间价"""
+        # Use dynamic grid spacing if enabled
+        dynamic_spacing = self._apply_dynamic_grid_spacing(self.grid_spacing) if self.dynamic_grid_enabled else self.grid_spacing
+        
         if side == 'long':
             self.mid_price_long = price
-            self.upper_price_long = self.mid_price_long * (1 + self.grid_spacing)
-            self.lower_price_long = self.mid_price_long * (1 - self.grid_spacing)
-            logger.info("更新 long 中间价")
+            self.upper_price_long = self.mid_price_long * (1 + dynamic_spacing)
+            self.lower_price_long = self.mid_price_long * (1 - dynamic_spacing)
+            logger.info(f"更新 long 中间价，动态网格间距: {dynamic_spacing:.4f}")
 
         elif side == 'short':
             self.mid_price_short = price
-            self.upper_price_short = self.mid_price_short * (1 + self.grid_spacing)
-            self.lower_price_short = self.mid_price_short * (1 - self.grid_spacing)
-            logger.info("更新 short 中间价")
+            self.upper_price_short = self.mid_price_short * (1 + dynamic_spacing)
+            self.lower_price_short = self.mid_price_short * (1 - dynamic_spacing)
+            logger.info(f"更新 short 中间价，动态网格间距: {dynamic_spacing:.4f}")
 
     async def _check_risk(self):
         """检查持仓并减少库存风险（紧急减仓：固定数量 + 冷却 + 暂停网格 + 退出滞后）"""
@@ -1417,6 +1516,20 @@ class BinanceGridBot:
 
         # 记录价格与风控辅助
         self._record_price(self.latest_price)
+        
+        # Check and adjust grid based on volatility and regime (for dynamic grid)
+        if self.dynamic_grid_enabled:
+            await self._check_and_adjust_grid()
+            
+        # Check for regime-based adjustments
+        if self.dynamic_grid_enabled and self.dynamic_grid.regime_enabled:
+            if self.dynamic_grid.should_adjust_for_regime():
+                await self._handle_regime_change()
+                
+        # Check for anchor-based adjustments (DGT methodology)
+        if self.dynamic_grid_enabled and self.anchor_enabled:
+            if self.dynamic_grid.should_reset_anchor():
+                await self._handle_anchor_reset()
 
         self._reset_emg_daily_counter_if_new_day()
 
@@ -1964,4 +2077,310 @@ class BinanceGridBot:
 ⏰ **完成时间**: {time.strftime("%Y-%m-%d %H:%M:%S")}
 """
         await self._send_telegram_message(message, urgent=False)
+    
+    async def _fetch_kline_data(self, limit=20):
+        """Fetch kline data for ATR, volatility, and regime analysis"""
+        try:
+            # Use 15-minute klines for more responsive tracking
+            ohlcv = self.exchange.fetch_ohlcv(
+                self.ccxt_symbol, 
+                timeframe='15m',
+                limit=limit
+            )
+            
+            for candle in ohlcv:
+                # [timestamp, open, high, low, close, volume]
+                high = candle[2]
+                low = candle[3]
+                close = candle[4]
+                volume = candle[5]  # Include volume for regime analysis
+                
+                # Update dynamic grid calculator with price and volume data
+                self.dynamic_grid.update_price_data(high, low, close, volume)
+                
+            self.last_kline_update_time = time.time()
+            logger.info(f"Updated kline data for dynamic grid and regime analysis")
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch kline data: {e}")
+    
+    def _get_dynamic_grid_spacing(self):
+        """Get dynamic grid spacing based on current volatility"""
+        if not self.dynamic_grid_enabled:
+            return self.grid_spacing
+            
+        # Fetch kline data if needed (every 15 minutes)
+        current_time = time.time()
+        if current_time - self.last_kline_update_time > 900:  # 15 minutes
+            asyncio.create_task(self._fetch_kline_data())
+        
+        # Get dynamic parameters
+        params = self.dynamic_grid.calculate_dynamic_grid_params()
+        
+        # Log volatility metrics periodically
+        if current_time - self.last_grid_adjustment_time > 300:  # Every 5 minutes
+            metrics = self.dynamic_grid.get_volatility_metrics()
+            logger.info(f"Dynamic Grid Metrics: ATR={metrics.get('atr', 'N/A'):.6f}, "
+                       f"Volatility Ratio={metrics.get('volatility_ratio', 'N/A'):.4f}, "
+                       f"Grid Spacing={params['grid_spacing']:.4f}, "
+                       f"Grid Levels={params['grid_levels']}, "
+                       f"Market Condition={metrics.get('market_condition', 'unknown')}")
+            self.last_grid_adjustment_time = current_time
+        
+        return params['grid_spacing']
+    
+    async def _check_and_adjust_grid(self):
+        """Check if grid needs adjustment based on volatility changes"""
+        if not self.dynamic_grid_enabled:
+            return
+            
+        try:
+            strategy = self.dynamic_grid.get_grid_adjustment_strategy(self.latest_price)
+            
+            if strategy['action'] == 'adjust':
+                logger.info(f"Grid adjustment needed: New spacing={strategy['new_spacing']:.4f}, "
+                          f"New levels={strategy['new_levels']}, "
+                          f"Volatility ratio={strategy.get('volatility_ratio', 'N/A'):.4f}")
+                
+                # Cancel orders that are too far from current price
+                for grid in strategy.get('cancel_orders', []):
+                    if grid.order_id:
+                        try:
+                            self.exchange.cancel_order(grid.order_id, self.ccxt_symbol)
+                            logger.info(f"Cancelled order {grid.order_id} at price {grid.price}")
+                        except Exception as e:
+                            logger.error(f"Failed to cancel order {grid.order_id}: {e}")
+                
+                # Update grid spacing for new orders
+                self.grid_spacing = strategy['new_spacing']
+                
+                # Send notification about grid adjustment
+                await self._send_grid_adjustment_notification(strategy)
+                
+        except Exception as e:
+            logger.error(f"Failed to check/adjust grid: {e}")
+    
+    async def _send_grid_adjustment_notification(self, strategy):
+        """Send notification about grid adjustment"""
+        if not ENABLE_NOTIFICATIONS:
+            return
+            
+        message = f"""
+🔄 **动态网格调整**
+
+📊 **调整信息**
+• 币种: {self.symbol}
+• 新网格间距: {strategy['new_spacing']:.4f}
+• 新网格层数: {strategy['new_levels']}
+• 波动率: {strategy.get('volatility_ratio', 0):.4f}
+• ATR: {strategy.get('atr', 0):.6f}
+
+📈 **市场状况**
+• {self.dynamic_grid.get_market_condition()}
+
+⏰ **调整时间**: {time.strftime("%Y-%m-%d %H:%M:%S")}
+"""
+        await self._send_telegram_message(message, urgent=False, silent=True)
+    
+    def _apply_dynamic_grid_spacing(self, base_spacing):
+        """Apply dynamic grid spacing based on current volatility"""
+        if not self.dynamic_grid_enabled:
+            return base_spacing
+            
+        dynamic_spacing = self._get_dynamic_grid_spacing()
+        
+        # Apply bounds to prevent extreme values
+        min_spacing = base_spacing * 0.5
+        max_spacing = base_spacing * 3.0
+        
+        return max(min_spacing, min(dynamic_spacing, max_spacing))
+    
+    async def _handle_regime_change(self):
+        """Handle regime change detection and grid adjustments"""
+        try:
+            regime_analysis = self.dynamic_grid.get_regime_analysis()
+            
+            if regime_analysis.get('enabled', False):
+                logger.info(f"Market regime change detected: {regime_analysis['regime']} "
+                          f"(confidence: {regime_analysis['confidence']:.2%})")
+                
+                # Send regime change notification
+                await self._send_regime_change_notification(regime_analysis)
+                
+                # Adjust grid parameters based on new regime
+                params = self.dynamic_grid.calculate_dynamic_grid_params()
+                
+                # Update grid spacing for new orders
+                old_spacing = self.grid_spacing
+                self.grid_spacing = params['grid_spacing']
+                
+                logger.info(f"Grid spacing adjusted for regime: {old_spacing:.4f} → {self.grid_spacing:.4f}")
+                
+        except Exception as e:
+            logger.error(f"Failed to handle regime change: {e}")
+    
+    async def _send_regime_change_notification(self, regime_analysis):
+        """Send notification about regime change"""
+        if not ENABLE_NOTIFICATIONS:
+            return
+            
+        regime = regime_analysis['regime']
+        confidence = regime_analysis['confidence']
+        recommendation = regime_analysis.get('recommendation', 'No specific recommendation')
+        
+        # Regime-specific emojis
+        regime_emojis = {
+            'strong_uptrend': '🚀',
+            'weak_uptrend': '📈',
+            'strong_downtrend': '💥',
+            'weak_downtrend': '📉',
+            'ranging_high': '🔴',
+            'ranging_neutral': '⚖️',
+            'ranging_low': '🟢',
+            'volatile': '⚡',
+            'quiet': '😴'
+        }
+        
+        emoji = regime_emojis.get(regime, '📊')
+        
+        message = f"""
+{emoji} **市场机制变化检测**
+
+📊 **新机制状态**
+• 机制类型: {regime.replace('_', ' ').title()}
+• 置信度: {confidence:.1%}
+• 币种: {self.symbol}
+
+📈 **技术指标**
+• 趋势强度: {regime_analysis.get('trend_strength', 0):.2f}
+• 动量: {regime_analysis.get('momentum', 50):.1f}
+• 波动率: {regime_analysis.get('regime_volatility', 0):.4f}
+• 仓位偏向: {regime_analysis.get('position_bias', 'neutral').title()}
+
+🔄 **网格调整**
+• 新间距倍数: {regime_analysis.get('grid_spacing_multiplier', 1.0):.2f}x
+• 新层级倍数: {regime_analysis.get('grid_levels_multiplier', 1.0):.2f}x
+
+💡 **策略建议**
+{recommendation}
+
+⏰ **检测时间**: {time.strftime("%Y-%m-%d %H:%M:%S")}
+"""
+        await self._send_telegram_message(message, urgent=False, silent=True)
+    
+    def _get_enhanced_volatility_metrics(self):
+        """Get enhanced volatility metrics including regime analysis"""
+        base_metrics = self.dynamic_grid.get_volatility_metrics()
+        
+        # Add regime-specific insights
+        if self.dynamic_grid.regime_enabled:
+            regime_analysis = self.dynamic_grid.get_regime_analysis()
+            base_metrics.update({
+                'regime_analysis': regime_analysis,
+                'individual_signals': regime_analysis.get('individual_signals', {})
+            })
+        
+        return base_metrics
+    
+    async def _record_trade_result(self, order, side, position_side, filled_quantity, reduce_only):
+        """Record trade result for anchor system performance tracking (DGT methodology)"""
+        if not self.anchor_enabled or not hasattr(self.dynamic_grid, 'record_trade_result'):
+            return
+            
+        try:
+            fill_price = float(order.get("ap", 0))  # Average price
+            if fill_price <= 0:
+                return
+                
+            # Determine if this is a profit-taking trade (close position)
+            is_profit_trade = reduce_only == "true" or reduce_only is True
+            
+            # Calculate trade result for anchor system
+            if is_profit_trade:
+                # For profit trades, we need to calculate the P&L
+                entry_type = 'long' if position_side == "LONG" else 'short'
+                
+                # Record the trade result for anchor performance tracking
+                self.dynamic_grid.record_trade_result(
+                    entry_price=fill_price,  # This will be refined by the anchor system
+                    exit_price=fill_price,
+                    trade_type=entry_type,
+                    profit=0.0,  # Will be calculated internally by anchor system
+                    timestamp=time.time()
+                )
+                
+                logger.info(f"[DGT Anchor] Recorded profit trade: {entry_type} @ {fill_price:.4f}, quantity: {filled_quantity:.4f}")
+                
+        except Exception as e:
+            logger.error(f"Failed to record trade result for anchor system: {e}")
+    
+    async def _handle_anchor_reset(self):
+        """Handle anchor reset detection and grid adjustments (DGT methodology)"""
+        if not self.anchor_enabled:
+            return
+            
+        try:
+            # Get current anchor metrics
+            anchor_metrics = self.dynamic_grid.get_anchor_metrics()
+            
+            # Force anchor reset to optimal position
+            reset_result = self.dynamic_grid.force_anchor_reset(self.latest_price)
+            
+            if reset_result.get('reset_occurred', False):
+                logger.info(f"[DGT Anchor] Anchor reset executed: "
+                          f"Old anchor: {reset_result.get('old_anchor', 'N/A'):.4f}, "
+                          f"New anchor: {reset_result.get('new_anchor', self.latest_price):.4f}, "
+                          f"Performance: {reset_result.get('performance_score', 0):.3f}")
+                
+                # Send anchor reset notification
+                await self._send_anchor_reset_notification(anchor_metrics, reset_result)
+                
+                # Recalculate grid parameters based on new anchor
+                params = self.dynamic_grid.calculate_dynamic_grid_params()
+                old_spacing = self.grid_spacing
+                self.grid_spacing = params['grid_spacing']
+                
+                logger.info(f"[DGT Anchor] Grid spacing adjusted after reset: {old_spacing:.4f} → {self.grid_spacing:.4f}")
+                
+        except Exception as e:
+            logger.error(f"Failed to handle anchor reset: {e}")
+    
+    async def _send_anchor_reset_notification(self, anchor_metrics, reset_result):
+        """Send notification about anchor reset (DGT methodology)"""
+        if not ENABLE_NOTIFICATIONS:
+            return
+            
+        # Throttle anchor notifications (max once per hour)
+        current_time = time.time()
+        if current_time - self.last_anchor_notification_time < 3600:
+            return
+        self.last_anchor_notification_time = current_time
+        
+        old_anchor = reset_result.get('old_anchor', 0)
+        new_anchor = reset_result.get('new_anchor', 0)
+        performance = reset_result.get('performance_score', 0)
+        anchor_type = reset_result.get('anchor_type', 'optimal').replace('_', ' ').title()
+        
+        message = f"""
+⚓ **DGT锚点系统重置**
+
+📊 **重置详情**
+• 币种: {self.symbol}
+• 旧锚点: {old_anchor:.4f}
+• 新锚点: {new_anchor:.4f}
+• 锚点类型: {anchor_type}
+
+📈 **性能分析**
+• 性能评分: {performance:.3f}
+• 总交易: {anchor_metrics.get('total_trades', 0)}
+• 盈利率: {anchor_metrics.get('win_rate', 0):.1%}
+• 平均盈利: {anchor_metrics.get('avg_profit', 0):.4f}
+
+🔄 **网格调整**
+• 新网格间距: {self.grid_spacing:.4f}
+• 预期优化: 提升基于历史性能的网格定位
+
+⏰ **重置时间**: {time.strftime("%Y-%m-%d %H:%M:%S")}
+"""
+        await self._send_telegram_message(message, urgent=False, silent=True)
     
