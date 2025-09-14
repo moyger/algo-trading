@@ -15,29 +15,29 @@ sys.path.append(os.path.dirname(__file__))
 from binance_multi_bot import BinanceGridBot
 from logging_config import setup_logging, create_bot_logger, DailyStatusLogger
 
-# 加载环境变量
+# Load environment variables
 load_dotenv()
 
-# 全局变量用于控制所有机器人
+# Global variables to control all bots
 running_bots = {}
 stop_event = threading.Event()
 
-# 配置优化的日志系统
+# Configure optimized logging system
 main_logger = setup_logging()
 daily_status_logger = DailyStatusLogger(main_logger)
 
 def load_config(config_file='config/symbols.yaml'):
     """
-    加载配置文件
+    Load configuration file
     
     Args:
-        config_file: 配置文件路径，支持 yaml 和 json 格式
+        config_file: Configuration file path, supports yaml and json formats
         
     Returns:
-        dict: 配置字典
+        dict: Configuration dictionary
     """
     if not os.path.exists(config_file):
-        main_logger.error(f"配置文件 {config_file} 不存在")
+        main_logger.error(f"Configuration file {config_file} does not exist")
         return None
     
     try:
@@ -47,25 +47,25 @@ def load_config(config_file='config/symbols.yaml'):
             elif config_file.endswith('.json'):
                 config = json.load(f)
             else:
-                main_logger.error(f"不支持的配置文件格式: {config_file}")
+                main_logger.error(f"Unsupported configuration file format: {config_file}")
                 return None
         
-        # 验证配置格式
+        # Validate configuration format
         if 'symbols' not in config:
-            main_logger.error("配置文件中缺少 'symbols' 字段")
+            main_logger.error("Missing 'symbols' field in configuration file")
             return None
         
         if not isinstance(config['symbols'], list):
-            main_logger.error("'symbols' 字段必须是列表格式")
+            main_logger.error("'symbols' field must be in list format")
             return None
         
-        # 验证每个币种配置
+        # Validate each symbol configuration
         for i, symbol_config in enumerate(config['symbols']):
             if 'name' not in symbol_config:
-                main_logger.error(f"第 {i+1} 个币种配置缺少 'name' 字段")
+                main_logger.error(f"Symbol configuration #{i+1} missing 'name' field")
                 return None
             
-            # 设置默认值
+            # Set default values
             if 'grid_spacing' not in symbol_config:
                 symbol_config['grid_spacing'] = 0.001
             if 'initial_quantity' not in symbol_config:
@@ -75,61 +75,61 @@ def load_config(config_file='config/symbols.yaml'):
             if 'contract_type' not in symbol_config:
                 symbol_config['contract_type'] = 'USDT'
         
-        main_logger.info(f"成功加载配置文件: {config_file}")
+        main_logger.info(f"Successfully loaded configuration file: {config_file}")
         return config
     
     except Exception as e:
-        main_logger.error(f"加载配置文件失败: {e}")
+        main_logger.error(f"Failed to load configuration file: {e}")
         return None
 
 def validate_environment():
     """
-    验证环境变量
+    Validate environment variables
     
     Returns:
-        tuple: (api_key, api_secret) 或 (None, None)
+        tuple: (api_key, api_secret) or (None, None)
     """
     api_key = os.getenv("API_KEY", "")
     api_secret = os.getenv("API_SECRET", "")
     
     if not api_key or not api_secret:
-        main_logger.error("API_KEY 和 API_SECRET 必须设置在 .env 文件中")
+        main_logger.error("API_KEY and API_SECRET must be set in .env file")
         return None, None
     
-    # 验证其他可选配置
+    # Validate other optional configurations
     telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
     enable_notifications = os.getenv("ENABLE_NOTIFICATIONS", "true").lower() == "true"
     
     if enable_notifications:
         if not telegram_bot_token or not telegram_chat_id:
-            main_logger.warning("Telegram通知已启用但缺少BOT_TOKEN或CHAT_ID，将禁用通知功能")
+            main_logger.warning("Telegram notifications enabled but missing BOT_TOKEN or CHAT_ID, disabling notification feature")
         else:
-            main_logger.info("Telegram通知功能已启用")
+            main_logger.info("Telegram notification feature enabled")
     
     return api_key, api_secret
 
 def create_bot_logger(symbol):
     """
-    为每个币种创建独立的日志记录器
+    Create independent logger for each symbol
     
     Args:
-        symbol: 币种符号
+        symbol: Symbol name
         
     Returns:
-        logging.Logger: 日志记录器
+        logging.Logger: Logger instance
     """
     from logging_config import create_bot_logger as create_logger
     return create_logger(symbol)
 
 def run_single_bot(symbol_config, api_key, api_secret):
     """
-    运行单个币种的网格机器人
+    Run grid bot for single symbol
     
     Args:
-        symbol_config: 币种配置字典
-        api_key: API密钥
-        api_secret: API密钥
+        symbol_config: Symbol configuration dictionary
+        api_key: API key
+        api_secret: API secret
         
     Returns:
         tuple: (symbol, success, error_message)
@@ -138,7 +138,7 @@ def run_single_bot(symbol_config, api_key, api_secret):
     logger = create_bot_logger(symbol)
     
     try:
-        # 构建配置字典
+        # Build configuration dictionary
         config = {
             'grid_spacing': symbol_config['grid_spacing'],
             'initial_quantity': symbol_config['initial_quantity'],
@@ -146,158 +146,158 @@ def run_single_bot(symbol_config, api_key, api_secret):
             'contract_type': symbol_config['contract_type']
         }
         
-        logger.info(f"启动 {symbol} 网格机器人")
-        logger.info(f"配置: 网格间距={config['grid_spacing']:.3f}, 初始数量={config['initial_quantity']}, 杠杆={config['leverage']}")
+        logger.info(f"Starting {symbol} grid bot")
+        logger.info(f"Configuration: grid_spacing={config['grid_spacing']:.3f}, initial_quantity={config['initial_quantity']}, leverage={config['leverage']}")
         
-        # 创建机器人实例
+        # Create bot instance
         bot = BinanceGridBot(symbol=symbol, api_key=api_key, api_secret=api_secret, config=config)
         
-        # 存储机器人实例（用于停止）
+        # Store bot instance (for stopping)
         running_bots[symbol] = bot
         
-        # 在新线程中创建事件循环并运行机器人
+        # Create event loop and run bot in new thread
         def run_bot_with_loop():
             try:
-                # 创建新的事件循环
+                # Create new event loop
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 
-                # 运行机器人
+                # Run bot
                 loop.run_until_complete(bot.start())
             except Exception as e:
-                logger.error(f"机器人运行异常: {e}")
+                logger.error(f"Bot runtime exception: {e}")
             finally:
                 try:
                     loop.close()
                 except:
                     pass
         
-        # 在新线程中运行
+        # Run in new thread
         import threading
         bot_thread = threading.Thread(target=run_bot_with_loop, name=f"bot-{symbol}")
         bot_thread.daemon = True
         bot_thread.start()
         
-        # 等待一小段时间确保线程启动
+        # Wait briefly to ensure thread starts
         import time
         time.sleep(0.1)
         
-        # 等待机器人真正启动
-        max_wait_time = 30  # 最多等待30秒
+        # Wait for bot to actually start
+        max_wait_time = 30  # Wait maximum 30 seconds
         wait_time = 0
         while wait_time < max_wait_time:
             if symbol in running_bots:
-                # 检查机器人是否真正运行
+                # Check if bot is actually running
                 bot = running_bots[symbol]
                 if hasattr(bot, 'running') and bot.running:
-                    logger.info(f"{symbol} 机器人已添加到运行列表")
+                    logger.info(f"{symbol} bot added to running list")
                     return symbol, True, None
             time.sleep(1)
             wait_time += 1
         
-        # 如果超时，从运行列表中移除
+        # Remove from running list if timeout
         if symbol in running_bots:
             del running_bots[symbol]
         
-        return symbol, False, "机器人启动超时"
+        return symbol, False, "Bot startup timeout"
         
     except Exception as e:
-        error_msg = f"启动 {symbol} 机器人失败: {str(e)}"
+        error_msg = f"Failed to start {symbol} bot: {str(e)}"
         logger.error(error_msg)
         return symbol, False, error_msg
 
 def signal_handler(signum, frame):
     """
-    信号处理器，用于优雅停止所有机器人
+    Signal handler for graceful shutdown of all bots
     """
-    main_logger.info("收到停止信号，正在停止所有机器人...")
+    main_logger.info("Received stop signal, shutting down all bots...")
     stop_event.set()
     
-    # 停止所有机器人
+    # Stop all bots
     for symbol, bot in running_bots.items():
         try:
             bot.stop()
-            main_logger.info(f"已停止 {symbol} 机器人")
+            main_logger.info(f"Stopped {symbol} bot")
         except Exception as e:
-            main_logger.error(f"停止 {symbol} 机器人失败: {e}")
+            main_logger.error(f"Failed to stop {symbol} bot: {e}")
     
     sys.exit(0)
 
 def print_status():
     """
-    打印当前运行状态并写入状态汇总日志
+    Print current running status and write status summary log
     """
     while not stop_event.is_set():
         try:
             active_bots = len(running_bots)
             if active_bots > 0:
                 symbols = list(running_bots.keys())
-                status_info = f"当前活跃机器人: {active_bots} 个 - {', '.join(symbols)}"
-                # 使用每日状态记录器，每天只记录一次
+                status_info = f"Current active bots: {active_bots} - {', '.join(symbols)}"
+                # Use daily status logger, log only once per day
                 daily_status_logger.log_status(status_info)
                 
-                # 写入状态汇总日志（保持原有的实时更新）
+                # Write status summary log (maintain original real-time updates)
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                 status_summary = f"[{timestamp}] Active Bots: {', '.join([f'{s}=Running' for s in symbols])}"
                 
-                # 写入状态汇总文件
+                # Write status summary file
                 try:
                     with open('log/status_summary.log', 'a', encoding='utf-8') as f:
                         f.write(status_summary + '\n')
                 except Exception as e:
-                    main_logger.error(f"写入状态汇总日志失败: {e}")
+                    main_logger.error(f"Failed to write status summary log: {e}")
             else:
-                daily_status_logger.log_status("当前没有活跃的机器人")
+                daily_status_logger.log_status("No active bots currently")
                 
-                # 写入状态汇总文件
+                # Write status summary file
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                 status_summary = f"[{timestamp}] Active Bots: None"
                 try:
                     with open('log/status_summary.log', 'a', encoding='utf-8') as f:
                         f.write(status_summary + '\n')
                 except Exception as e:
-                    main_logger.error(f"写入状态汇总日志失败: {e}")
+                    main_logger.error(f"Failed to write status summary log: {e}")
                     
-            time.sleep(30)  # 每30秒检查一次状态
+            time.sleep(30)  # Check status every 30 seconds
         except KeyboardInterrupt:
             break
 
 def main():
     """
-    主函数
+    Main function
     """
-    # 注册信号处理器
+    # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    main_logger.info("多币种网格交易机器人启动中...")
+    main_logger.info("Multi-symbol grid trading bot starting...")
     
-    # 验证环境变量
+    # Validate environment variables
     api_key, api_secret = validate_environment()
     if not api_key or not api_secret:
-        main_logger.error("环境变量验证失败，程序退出")
+        main_logger.error("Environment variable validation failed, exiting")
         sys.exit(1)
     
-    # 加载配置文件
+    # Load configuration file
     config = load_config()
     if not config:
-        main_logger.error("配置文件加载失败，程序退出")
+        main_logger.error("Configuration file loading failed, exiting")
         sys.exit(1)
     
     symbols = config['symbols']
-    main_logger.info(f"配置了 {len(symbols)} 个币种: {[s['name'] for s in symbols]}")
+    main_logger.info(f"Configured {len(symbols)} symbols: {[s['name'] for s in symbols]}")
     
-    # 启动状态监控线程
+    # Start status monitoring thread
     status_thread = threading.Thread(target=print_status, daemon=True)
     status_thread.start()
     
-    # 直接运行所有机器人，不使用线程池
+    # Run all bots directly, without using thread pool
     bot_threads = {}
     for symbol_config in symbols:
         symbol = symbol_config['name']
-        main_logger.info(f"启动 {symbol} 网格机器人")
+        main_logger.info(f"Starting {symbol} grid bot")
         
-        # 创建机器人线程
+        # Create bot thread
         bot_thread = threading.Thread(
             target=run_single_bot, 
             args=(symbol_config, api_key, api_secret),
@@ -307,34 +307,34 @@ def main():
         bot_thread.start()
         bot_threads[symbol] = bot_thread
     
-    # 等待所有机器人启动完成
-    main_logger.info("等待所有机器人启动完成...")
+    # Wait for all bots to start
+    main_logger.info("Waiting for all bots to start...")
     for symbol, thread in bot_threads.items():
-        thread.join(timeout=60)  # 最多等待60秒
+        thread.join(timeout=60)  # Wait maximum 60 seconds
     
-    # 主循环：监控机器人状态
+    # Main loop: monitor bot status
     try:
         while not stop_event.is_set():
             active_bots = len(running_bots)
             if active_bots > 0:
                 symbols = list(running_bots.keys())
-                # 使用每日状态记录器，每天只记录一次
-                daily_status_logger.log_status(f"当前活跃机器人: {active_bots} 个 - {', '.join(symbols)}")
+                # Use daily status logger, log only once per day
+                daily_status_logger.log_status(f"Current active bots: {active_bots} - {', '.join(symbols)}")
             else:
-                daily_status_logger.log_status("当前没有活跃的机器人")
+                daily_status_logger.log_status("No active bots currently")
             
-            time.sleep(30)  # 每30秒检查一次状态
+            time.sleep(30)  # Check status every 30 seconds
     except KeyboardInterrupt:
-        main_logger.info("收到中断信号，正在停止所有机器人...")
+        main_logger.info("Received interrupt signal, stopping all bots...")
         stop_event.set()
         
-        # 停止所有机器人
+        # Stop all bots
         for symbol, bot in running_bots.items():
             try:
                 bot.stop()
-                main_logger.info(f"已停止 {symbol} 机器人")
+                main_logger.info(f"Stopped {symbol} bot")
             except Exception as e:
-                main_logger.error(f"停止 {symbol} 机器人失败: {e}")
+                main_logger.error(f"Failed to stop {symbol} bot: {e}")
 
 if __name__ == "__main__":
     main() 
